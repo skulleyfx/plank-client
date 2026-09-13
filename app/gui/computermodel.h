@@ -35,6 +35,8 @@ public:
 
     Q_INVOKABLE void authenticateComputer(int computerIndex, QString username, QString password);
 
+    Q_INVOKABLE QString lastUsername(int computerIndex);
+
     Q_INVOKABLE void renameComputer(int computerIndex, QString name);
 
     Q_INVOKABLE void requestRelayWake(int computerIndex);
@@ -71,6 +73,8 @@ public:
 
 signals:
     void authenticationCompleted(QVariant error);
+
+    void authenticationProgress(QString message);
 
     void relayWakeCompleted(QVariant error);
 

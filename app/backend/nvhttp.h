@@ -8,6 +8,7 @@
 #include <Limelight.h>
 
 #include <QUrl>
+#include <functional>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QJsonObject>
@@ -147,7 +148,10 @@ public:
 
     void setPlankSessionToken(QString sessionToken);
 
-    QString authenticate(QString username, QString password, bool* greeterConfirmed = nullptr);
+    // onMessage receives host informational messages, such as a DUO push
+    // notice, while authentication is in progress.
+    QString authenticate(QString username, QString password, bool* greeterConfirmed = nullptr,
+                         const std::function<void(const QString&)>& onMessage = {});
     bool probeWorkerReplacement(const QString& instance, const QString& certificateSha256);
     QString workerInstance() const { return m_WorkerInstance; }
     NvOutputTopology getOutputTopology(QString* certificateSha256 = nullptr);

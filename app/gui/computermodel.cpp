@@ -32,6 +32,10 @@ void ComputerModel::initialize(ComputerManager* computerManager)
             this, &ComputerModel::handleComputerStateChanged);
     connect(m_ComputerManager, &ComputerManager::authenticationCompleted,
             this, &ComputerModel::handleAuthenticationCompleted);
+    connect(m_ComputerManager, &ComputerManager::authenticationProgress,
+            this, [this](NvComputer*, QString message) {
+        emit authenticationProgress(message);
+    });
 
     m_Computers = m_ComputerManager->getComputers();
 }
@@ -315,6 +319,12 @@ void ComputerModel::authenticateComputer(int computerIndex, QString username,
     Q_ASSERT(computerIndex < m_Computers.count());
     m_ComputerManager->authenticateHost(m_Computers[computerIndex],
                                         std::move(username), std::move(password));
+}
+
+QString ComputerModel::lastUsername(int computerIndex)
+{
+    Q_ASSERT(computerIndex < m_Computers.count());
+    return m_ComputerManager->lastPlankUsername(m_Computers[computerIndex]);
 }
 
 void ComputerModel::handleAuthenticationCompleted(NvComputer*, QString error)

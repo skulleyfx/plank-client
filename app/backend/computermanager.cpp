@@ -682,6 +682,8 @@ public:
     {
         connect(this, &PendingAuthenticationTask::authenticationCompleted,
                 computerManager, &ComputerManager::authenticationCompleted);
+        connect(this, &PendingAuthenticationTask::authenticationProgress,
+                computerManager, &ComputerManager::authenticationProgress);
     }
 
     ~PendingAuthenticationTask()
@@ -692,6 +694,8 @@ public:
 
 signals:
     void authenticationCompleted(NvComputer* computer, QString error);
+
+    void authenticationProgress(NvComputer* computer, QString message);
 
 private:
     void run()
@@ -706,7 +710,10 @@ private:
             }
             NvHTTP http(address);
             bool greeter = false;
-            const QString token = http.authenticate(m_Username, m_Password, &greeter);
+            const QString token = http.authenticate(
+                        m_Username, m_Password, &greeter, [this](const QString& message) {
+                emit authenticationProgress(m_Computer, message);
+            });
             NvOutputTopology topology;
             bool topologySupported;
             bool macDesktop;
@@ -741,6 +748,7 @@ private:
                 m_Computer->updateAppList(apps);
             }
             m_ComputerManager->clientSideAttributeUpdated(m_Computer);
+            m_ComputerManager->rememberPlankUsername(m_Computer, m_Username);
             emit authenticationCompleted(m_Computer, nullptr);
         } catch (const GfeHttpResponseException& error) {
             m_Password.fill(QChar('\0'));
@@ -795,6 +803,28 @@ void ComputerManager::authenticateHost(NvComputer* computer, QString username,
     PendingAuthenticationTask* authentication = new PendingAuthenticationTask(
         this, computer, std::move(username), std::move(password), matchedMode);
     QThreadPool::globalInstance()->start(authentication);
+}
+
+QString ComputerManager::lastPlankUsername(NvComputer* computer)
+{
+    QString uuid;
+    {
+        QReadLocker lock(&computer->lock);
+        uuid = computer->uuid;
+    }
+    QSettings settings;
+    return settings.value(QStringLiteral("plank-last-username/") + uuid).toString();
+}
+
+void ComputerManager::rememberPlankUsername(NvComputer* computer, const QString& username)
+{
+    QString uuid;
+    {
+        QReadLocker lock(&computer->lock);
+        uuid = computer->uuid;
+    }
+    QSettings settings;
+    settings.setValue(QStringLiteral("plank-last-username/") + uuid, username);
 }
 
 void ComputerManager::rememberPlankReconnectCredentials(

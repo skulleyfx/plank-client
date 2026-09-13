@@ -246,6 +246,11 @@ public:
 
     void authenticateHost(NvComputer* computer, QString username, QString password);
 
+    // The last username that signed in to this host. Passwords are never stored.
+    QString lastPlankUsername(NvComputer* computer);
+
+    void rememberPlankUsername(NvComputer* computer, const QString& username);
+
     bool takePlankReconnectCredentials(NvComputer* computer,
                                                 QString& username,
                                                 QString& password);
@@ -264,6 +269,8 @@ signals:
     void computerStateChanged(NvComputer* computer);
 
     void authenticationCompleted(NvComputer* computer, QString error);
+
+    void authenticationProgress(NvComputer* computer, QString message);
 
     void computerAddCompleted(QVariant success);
 

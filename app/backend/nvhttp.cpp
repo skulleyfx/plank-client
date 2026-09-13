@@ -610,7 +610,8 @@ bool NvHTTP::probeWorkerReplacement(const QString& instance, const QString& cert
                 QByteArray::fromHex(certificateSha256.toLatin1()), certificate);
 }
 
-QString NvHTTP::authenticate(QString username, QString password, bool* greeterConfirmed)
+QString NvHTTP::authenticate(QString username, QString password, bool* greeterConfirmed,
+                             const std::function<void(const QString&)>& onMessage)
 {
     if (greeterConfirmed != nullptr) *greeterConfirmed = false;
     SecureStringGuard passwordGuard(password);
@@ -619,7 +620,11 @@ QString NvHTTP::authenticate(QString username, QString password, bool* greeterCo
     }
 
     QJsonObject result = postPlankJson("start", {{"username", username}});
-    for (int round = 0; round < 16; ++round) {
+    // Rounds that only relay host messages (for example while a DUO push
+    // awaits approval) are bounded separately so a second factor has time.
+    QString lastMessage;
+    int infoOnlyRounds = 0;
+    for (int round = 0; round < 16 + infoOnlyRounds; ++round) {
         const QString state = result.value("state").toString();
         if (state == "authenticated") {
             m_SessionToken = result.value("session_token").toString();
@@ -632,6 +637,9 @@ QString NvHTTP::authenticate(QString username, QString password, bool* greeterCo
             return m_SessionToken;
         }
         if (state == "denied") {
+            if (!lastMessage.isEmpty()) {
+                throw GfeHttpResponseException(401, lastMessage);
+            }
             throw GfeHttpResponseException(401, "Operating-system authentication failed");
         }
         if (state == "busy") {
@@ -643,6 +651,24 @@ QString NvHTTP::authenticate(QString username, QString password, bool* greeterCo
 
         QJsonArray responses;
         const QJsonArray messages = result.value("messages").toArray();
+        bool infoOnly = !messages.isEmpty();
+        for (const QJsonValue& value : messages) {
+            const int style = value.toObject().value("style").toInt();
+            if (style == 3 || style == 4) {
+                const QString text = value.toObject().value("text").toString();
+                if (!text.isEmpty()) {
+                    lastMessage = text;
+                    if (onMessage) {
+                        onMessage(text);
+                    }
+                }
+            } else {
+                infoOnly = false;
+            }
+        }
+        if (infoOnly && infoOnlyRounds < 64) {
+            ++infoOnlyRounds;
+        }
         for (const QJsonValue& value : messages) {
             const QJsonObject message = value.toObject();
             switch (message.value("style").toInt()) {

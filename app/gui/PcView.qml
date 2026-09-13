@@ -45,9 +45,15 @@ CenteredGridView {
         ComputerManager.computerAddCompleted.disconnect(addComplete)
     }
 
+    function authenticationProgress(message)
+    {
+        signingInDialog.message = message
+    }
+
     function authenticationComplete(error)
     {
         var pcIndex = loginDialog.pcIndex
+        signingInDialog.close()
         loginDialog.close()
         if (error !== undefined) {
             errorDialog.text = error
@@ -89,6 +95,7 @@ CenteredGridView {
         var model = Qt.createQmlObject('import ComputerModel 1.0; ComputerModel {}', parent, '')
         model.initialize(ComputerManager)
         model.authenticationCompleted.connect(authenticationComplete)
+        model.authenticationProgress.connect(authenticationProgress)
         model.relayWakeCompleted.connect(function(error) {
             if (error !== undefined) {
                 errorDialog.text = error
@@ -348,13 +355,22 @@ CenteredGridView {
         closePolicy: Popup.CloseOnEscape
         standardButtons: Dialog.Ok | Dialog.Cancel
 
-        onOpened: usernameField.forceActiveFocus()
+        onAboutToShow: usernameField.text = computerModel.lastUsername(pcIndex)
+        onOpened: {
+            if (usernameField.text) {
+                passwordField.forceActiveFocus()
+            } else {
+                usernameField.forceActiveFocus()
+            }
+        }
         onClosed: {
             usernameField.clear()
             passwordField.clear()
         }
         onAccepted: {
             if (usernameField.text && passwordField.text) {
+                signingInDialog.message = qsTr("Checking your credentials...")
+                signingInDialog.open()
                 computerModel.authenticateComputer(pcIndex, usernameField.text,
                                                    passwordField.text)
             }
@@ -390,6 +406,30 @@ CenteredGridView {
                 Layout.fillWidth: true
                 Keys.onReturnPressed: loginDialog.accept()
                 Keys.onEnterPressed: loginDialog.accept()
+            }
+        }
+    }
+
+    NavigableDialog {
+        id: signingInDialog
+        property string message: ""
+        title: qsTr("Signing in")
+        modal: true
+        closePolicy: Popup.NoAutoClose
+
+        ColumnLayout {
+            spacing: 12
+
+            BusyIndicator {
+                running: signingInDialog.visible
+                Layout.alignment: Qt.AlignHCenter
+            }
+            Label {
+                text: signingInDialog.message
+                wrapMode: Text.Wrap
+                horizontalAlignment: Text.AlignHCenter
+                Layout.fillWidth: true
+                Layout.preferredWidth: 360
             }
         }
     }
