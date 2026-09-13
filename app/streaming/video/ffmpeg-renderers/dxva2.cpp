@@ -539,12 +539,26 @@ bool DXVA2Renderer::isDecoderBlacklisted()
     return result;
 }
 
+// SDL3 removed SDL_GetWindowWMInfo()/SDL_SysWMinfo. Retrieve the HWND via the
+// window property API, matching the idiom used elsewhere in this tree.
+static HWND plankGetHwnd(SDL_Window* window)
+{
+    const SDL_PropertiesID properties = SDL_GetWindowProperties(window);
+    if (properties == 0) {
+        return nullptr;
+    }
+    return (HWND)SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+}
+
 bool DXVA2Renderer::initializeDevice(SDL_Window* window, bool enableVsync)
 {
-    SDL_SysWMinfo info;
-
-    SDL_VERSION(&info.version);
-    SDL_GetWindowWMInfo(window, &info);
+    HWND hwnd = plankGetHwnd(window);
+    if (hwnd == nullptr) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Unable to get HWND from SDL window: %s",
+                     SDL_GetError());
+        return false;
+    }
 
     ComPtr<IDirect3D9Ex> d3d9ex;
     HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, &d3d9ex);
@@ -572,7 +586,7 @@ bool DXVA2Renderer::initializeDevice(SDL_Window* window, bool enableVsync)
     d3d9ex->GetAdapterDisplayModeEx(adapterIndex, &currentMode, nullptr);
 
     D3DPRESENT_PARAMETERS d3dpp = {};
-    d3dpp.hDeviceWindow = info.info.win.window;
+    d3dpp.hDeviceWindow = hwnd;
     d3dpp.Flags = D3DPRESENTFLAG_VIDEO;
 
     if (m_VideoFormat & VIDEO_FORMAT_MASK_10BIT) {
@@ -590,7 +604,8 @@ bool DXVA2Renderer::initializeDevice(SDL_Window* window, bool enableVsync)
         }
     }
 
-    if ((windowFlags & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN) {
+    if ((windowFlags & SDL_WINDOW_FULLSCREEN) != 0 &&
+            SDL_GetWindowFullscreenMode(window) != nullptr) {
         d3dpp.Windowed = false;
         d3dpp.BackBufferWidth = currentMode.Width;
         d3dpp.BackBufferHeight = currentMode.Height;
@@ -849,7 +864,7 @@ void DXVA2Renderer::notifyOverlayUpdated(Overlay::OverlayType type)
     }
 
     // Copy (and convert, if necessary) the surface pixels to the texture
-    SDL_ConvertPixels(newSurface->w, newSurface->h, newSurface->format->format, newSurface->pixels,
+    SDL_ConvertPixels(newSurface->w, newSurface->h, newSurface->format, newSurface->pixels,
                       newSurface->pitch, SDL_PIXELFORMAT_ARGB8888, lockedRect.pBits, lockedRect.Pitch);
 
     newTexture->UnlockRect(0);

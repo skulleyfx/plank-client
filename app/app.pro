@@ -1,7 +1,7 @@
 QT += core quick network quickcontrols2 svg
 CONFIG += c++17
 
-unix:contains(CONFIG, plank-transport) {
+contains(CONFIG, plank-transport) {
     isEmpty(PLANK_TRANSPORT_DIR) {
         PLANK_TRANSPORT_DIR = $$(PLANK_TRANSPORT_DIR)
     }
@@ -27,22 +27,60 @@ unix:contains(CONFIG, plank-transport) {
     PLANK_CARGO = $$(CARGO)
     isEmpty(PLANK_CARGO): PLANK_CARGO = cargo
     PLANK_TRANSPORT_CARGO_TARGET_DIR = $$OUT_PWD/plank-transport-cargo
-    PLANK_TRANSPORT_LIBRARY = $$PLANK_TRANSPORT_CARGO_TARGET_DIR/release/libplank_transport.a
+    win32 {
+        PLANK_TRANSPORT_LIBRARY = $$PLANK_TRANSPORT_CARGO_TARGET_DIR/x86_64-pc-windows-msvc/release/plank_transport.lib
+    }
+    else {
+        PLANK_TRANSPORT_LIBRARY = $$PLANK_TRANSPORT_CARGO_TARGET_DIR/release/libplank_transport.a
+    }
 
-    plank_transport.target = $$PLANK_TRANSPORT_LIBRARY
+    # nmake compares target names literally: qmake normalises PRE_TARGETDEPS and
+    # LIBS to backslashes, so the extra-target name must match or the rule never
+    # fires and the .lib is never built.
+    win32 {
+        plank_transport.target = $$shell_path($$PLANK_TRANSPORT_LIBRARY)
+    }
+    else {
+        plank_transport.target = $$PLANK_TRANSPORT_LIBRARY
+    }
     plank_transport.depends = FORCE
-    plank_transport.commands = \
-        CARGO_TARGET_DIR=$$shell_quote($$PLANK_TRANSPORT_CARGO_TARGET_DIR) \
-        $$shell_quote($$PLANK_CARGO) build --locked --offline --release \
-        --manifest-path $$shell_quote($$PLANK_TRANSPORT_DIR/Cargo.toml)
+    win32 {
+        # Use --target-dir rather than 'set CARGO_TARGET_DIR=... &&': cmd
+        # includes the space before '&&' in the value, producing a bad path.
+        plank_transport.commands = \
+            $$shell_quote($$PLANK_CARGO) build --locked --offline --release \
+            --target x86_64-pc-windows-msvc \
+            --target-dir $$shell_quote($$shell_path($$PLANK_TRANSPORT_CARGO_TARGET_DIR)) \
+            --manifest-path $$shell_quote($$shell_path($$PLANK_TRANSPORT_DIR/Cargo.toml))
+    }
+    else {
+        plank_transport.commands = \
+            CARGO_TARGET_DIR=$$shell_quote($$PLANK_TRANSPORT_CARGO_TARGET_DIR) \
+            $$shell_quote($$PLANK_CARGO) build --locked --offline --release \
+            --manifest-path $$shell_quote($$PLANK_TRANSPORT_DIR/Cargo.toml)
+    }
     QMAKE_EXTRA_TARGETS += plank_transport
     PRE_TARGETDEPS += $$PLANK_TRANSPORT_LIBRARY
     QMAKE_CLEAN += $$PLANK_TRANSPORT_CARGO_TARGET_DIR
 
     INCLUDEPATH += $$PLANK_TRANSPORT_DIR/include
-    LIBS += $$PLANK_TRANSPORT_LIBRARY -ldl -lpthread -lm
-    !macx: LIBS += -lrt
-    macx: LIBS += -framework Security -framework SystemConfiguration
+    win32 {
+        # Rust std on windows-msvc pulls these; -ldl/-lrt are POSIX-only.
+        LIBS += $$PLANK_TRANSPORT_LIBRARY \
+                ws2_32.lib userenv.lib ntdll.lib bcrypt.lib advapi32.lib secur32.lib
+
+        # Qt's win32-msvc mkspec enables /guard:ehcont (EH Continuation
+        # metadata). rustc's MSVC target does not emit it, so the linker
+        # refuses to mix the objects. /force:guardehcont links anyway; the
+        # Rust modules simply lack EHCONT hardening, the rest of the app
+        # keeps it. Revisit if rustc gains /guard:ehcont support.
+        QMAKE_LFLAGS += /force:guardehcont
+    }
+    else {
+        LIBS += $$PLANK_TRANSPORT_LIBRARY -ldl -lpthread -lm
+        !macx: LIBS += -lrt
+        macx: LIBS += -framework Security -framework SystemConfiguration
+    }
     DEFINES += PLANK_TRANSPORT=1
 }
 
@@ -92,6 +130,11 @@ win32 {
 
     INCLUDEPATH += $$PWD/../libs/windows/include
     LIBS += ws2_32.lib winmm.lib dxva2.lib ole32.lib gdi32.lib user32.lib d3d9.lib dwmapi.lib dbghelp.lib
+
+    # windows.h defines min/max as macros, which break std::min/std::max and
+    # std::numeric_limits<T>::max(). dxva2.cpp already worked around this
+    # locally; define it globally so newer sources do not have to.
+    DEFINES += NOMINMAX WIN32_LEAN_AND_MEAN
 }
 macx:!disable-prebuilts {
     !exists($$PWD/../libs/mac) {

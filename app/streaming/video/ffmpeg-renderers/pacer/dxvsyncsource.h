@@ -4,6 +4,11 @@
 
 #include <SDL3/SDL_system.h>
 
+// SDL2's SDL_system.h pulled in <windows.h> on Win32; SDL3's does not.
+// The Win32 types used below (HDC, LUID, HMODULE, HWND, HMONITOR, APIENTRY)
+// therefore need it included explicitly.
+#include <windows.h>
+
 // from <D3dkmthk.h>
 typedef LONG NTSTATUS;
 typedef UINT D3DKMT_HANDLE;

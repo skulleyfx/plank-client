@@ -25,6 +25,17 @@ DxVsyncSource::~DxVsyncSource()
     }
 }
 
+// SDL3 removed SDL_GetWindowWMInfo()/SDL_SysWMinfo. Retrieve the HWND via the
+// window property API, matching the idiom used elsewhere in this tree.
+static HWND plankGetHwnd(SDL_Window* window)
+{
+    const SDL_PropertiesID properties = SDL_GetWindowProperties(window);
+    if (properties == 0) {
+        return nullptr;
+    }
+    return (HWND)SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+}
+
 bool DxVsyncSource::initialize(SDL_Window* window, int)
 {
     m_Gdi32Handle = LoadLibraryA("gdi32.dll");
@@ -47,21 +58,15 @@ bool DxVsyncSource::initialize(SDL_Window* window, int)
         return false;
     }
 
-    SDL_SysWMinfo info;
-
-    SDL_VERSION(&info.version);
-
-    if (!SDL_GetWindowWMInfo(window, &info)) {
+    HWND hwnd = plankGetHwnd(window);
+    if (hwnd == nullptr) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "SDL_GetWindowWMInfo() failed: %s",
+                     "Unable to get HWND from SDL window: %s",
                      SDL_GetError());
         return false;
     }
 
-    // Pacer should only create us on Win32
-    SDL_assert(info.subsystem == SDL_SYSWM_WINDOWS);
-
-    m_Window = info.info.win.window;
+    m_Window = hwnd;
 
     return true;
 }

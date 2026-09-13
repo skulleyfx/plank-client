@@ -153,6 +153,26 @@ D3D11VARenderer::~D3D11VARenderer()
     m_Factory.Reset();
 }
 
+// SDL3 removed SDL_GetWindowWMInfo()/SDL_SysWMinfo. Retrieve the HWND via the
+// window property API, matching the idiom used elsewhere in this tree.
+// SDL3 removed SDL_WINDOW_FULLSCREEN_DESKTOP. Exclusive fullscreen is now
+// the FULLSCREEN flag combined with a non-null fullscreen display mode;
+// desktop fullscreen leaves that mode null (see session.cpp).
+static bool plankIsExclusiveFullscreen(SDL_Window* window)
+{
+    return (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0 &&
+            SDL_GetWindowFullscreenMode(window) != nullptr;
+}
+
+static HWND plankGetHwnd(SDL_Window* window)
+{
+    const SDL_PropertiesID properties = SDL_GetWindowProperties(window);
+    if (properties == 0) {
+        return nullptr;
+    }
+    return (HWND)SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+}
+
 bool D3D11VARenderer::createDeviceByAdapterIndex(int adapterIndex, bool* adapterNotFound)
 {
     const D3D_FEATURE_LEVEL supportedFeatureLevels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0 };
@@ -428,23 +448,27 @@ bool D3D11VARenderer::initialize(PDECODER_PARAMETERS params)
         // DXVA2 may let us take over for FSE V-sync off cases. However, if we don't have DXGI_FEATURE_PRESENT_ALLOW_TEARING
         // then we should not attempt to do this unless there's no other option (HDR, DXVA2 failed in pass 1, etc).
         if (!m_AllowTearing && m_DecoderSelectionPass == 0 && !(params->videoFormat & VIDEO_FORMAT_MASK_10BIT) &&
-                (SDL_GetWindowFlags(params->window) & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN) {
+                plankIsExclusiveFullscreen(params->window)) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Defaulting to DXVA2 for FSE without DXGI_FEATURE_PRESENT_ALLOW_TEARING support");
             return false;
         }
     }
 
-    SDL_SysWMinfo info;
-    SDL_VERSION(&info.version);
-    SDL_GetWindowWMInfo(params->window, &info);
-    SDL_assert(info.subsystem == SDL_SYSWM_WINDOWS);
+    HWND hwnd = plankGetHwnd(params->window);
+    SDL_assert(hwnd != nullptr);
+    if (hwnd == nullptr) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Unable to get HWND from SDL window: %s",
+                     SDL_GetError());
+        return false;
+    }
 
     // Always use windowed or borderless windowed mode.. SDL does mode-setting for us in
     // full-screen exclusive mode (SDL_WINDOW_FULLSCREEN), so this actually works out okay.
     ComPtr<IDXGISwapChain1> swapChain;
     hr = m_Factory->CreateSwapChainForHwnd(m_Device.Get(),
-                                           info.info.win.window,
+                                           hwnd,
                                            &swapChainDesc,
                                            nullptr,
                                            nullptr,
@@ -468,7 +492,7 @@ bool D3D11VARenderer::initialize(PDECODER_PARAMETERS params)
     // Disable Alt+Enter, PrintScreen, and window message snooping. This makes
     // it safe to run the renderer on a separate rendering thread rather than
     // requiring the main (message loop) thread.
-    hr = m_Factory->MakeWindowAssociation(info.info.win.window, DXGI_MWA_NO_WINDOW_CHANGES);
+    hr = m_Factory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_WINDOW_CHANGES);
     if (FAILED(hr)) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "IDXGIFactory::MakeWindowAssociation() failed: %x",
@@ -916,7 +940,7 @@ void D3D11VARenderer::notifyOverlayUpdated(Overlay::OverlayType type)
 
     // Create a texture with our pixel data
     SDL_assert(!SDL_MUSTLOCK(newSurface));
-    SDL_assert(newSurface->format->format == SDL_PIXELFORMAT_ARGB8888);
+    SDL_assert(newSurface->format == SDL_PIXELFORMAT_ARGB8888);
 
     D3D11_TEXTURE2D_DESC texDesc = {};
     texDesc.Width = newSurface->w;
@@ -1189,7 +1213,7 @@ int D3D11VARenderer::getRendererAttributes()
     // In windowed mode, we will render as fast we can and DWM will grab whatever is latest at the
     // time unless the user opts for pacing. We will use pacing in full-screen mode and normal DWM
     // sequencing in full-screen desktop mode to behave similarly to the DXVA2 renderer.
-    if ((SDL_GetWindowFlags(m_DecoderParams.window) & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN) {
+    if (plankIsExclusiveFullscreen(m_DecoderParams.window)) {
         attributes |= RENDERER_ATTRIBUTE_FORCE_PACING;
     }
 

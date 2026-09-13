@@ -11,6 +11,12 @@ extern "C" {
 
 #include <wrl/client.h>
 
+// std::array is used for the shader/texture/overlay member arrays below.
+// It was previously pulled in transitively by <wrl/wrappers/corewrappers.h>;
+// include it explicitly rather than relying on that.
+#include <array>
+#include <vector>
+
 class D3D11VARenderer : public IFFmpegRenderer
 {
 public:

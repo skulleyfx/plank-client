@@ -3708,22 +3708,27 @@ void Session::execInternal()
             darkModeEnabled = FALSE;
         }
 
-        SDL_SysWMinfo info;
-        SDL_VERSION(&info.version);
+        // SDL3 removed SDL_GetWindowWMInfo()/SDL_SysWMinfo in favour of the
+        // window property API. Match the idiom already used for the KMSDRM
+        // and VAAPI paths elsewhere in this tree.
+        const SDL_PropertiesID properties = SDL_GetWindowProperties(m_Window);
+        HWND sdlHwnd = properties != 0 ?
+                    (HWND)SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr) :
+                    nullptr;
 
-        if (SDL_GetWindowWMInfo(m_Window, &info) && info.subsystem == SDL_SYSWM_WINDOWS) {
+        if (sdlHwnd != nullptr) {
             // If dark mode is enabled, propagate that to our SDL window
             if (darkModeEnabled) {
-                if (FAILED(DwmSetWindowAttribute(info.info.win.window, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkModeEnabled, sizeof(darkModeEnabled)))) {
-                    DwmSetWindowAttribute(info.info.win.window, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, &darkModeEnabled, sizeof(darkModeEnabled));
+                if (FAILED(DwmSetWindowAttribute(sdlHwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkModeEnabled, sizeof(darkModeEnabled)))) {
+                    DwmSetWindowAttribute(sdlHwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, &darkModeEnabled, sizeof(darkModeEnabled));
                 }
 
                 // Toggle non-client rendering off and back on to ensure dark mode takes effect on Windows 10.
                 // DWM doesn't seem to correctly invalidate the non-client area after enabling dark mode.
                 DWMNCRENDERINGPOLICY ncPolicy = DWMNCRP_DISABLED;
-                DwmSetWindowAttribute(info.info.win.window, DWMWA_NCRENDERING_POLICY, &ncPolicy, sizeof(ncPolicy));
+                DwmSetWindowAttribute(sdlHwnd, DWMWA_NCRENDERING_POLICY, &ncPolicy, sizeof(ncPolicy));
                 ncPolicy = DWMNCRP_ENABLED;
-                DwmSetWindowAttribute(info.info.win.window, DWMWA_NCRENDERING_POLICY, &ncPolicy, sizeof(ncPolicy));
+                DwmSetWindowAttribute(sdlHwnd, DWMWA_NCRENDERING_POLICY, &ncPolicy, sizeof(ncPolicy));
             }
         }
     }
