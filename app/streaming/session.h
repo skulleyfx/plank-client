@@ -401,6 +401,11 @@ private:
     std::atomic_bool m_Reconnecting;
     std::atomic_bool m_ReconnectCancelled;
     std::atomic_bool m_CanReconnect;
+    // Reconnects that end again shortly after completing form a loop (each one
+    // may cost the user a second-factor approval), so they are bounded.
+    std::atomic<Uint64> m_LastReconnectCompletedTicks {0};
+    std::atomic_int m_RapidReconnects {0};
+    QString m_ReconnectFailureMessage;
     std::atomic_bool m_ConnectionStartCancelled;
     std::atomic_bool m_WaitingForSessionCleanup;
     std::atomic_bool m_WaitingForActiveSessionTakeoverDecision {false};

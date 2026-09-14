@@ -146,6 +146,28 @@ void Session::clConnectionTerminated(int errorCode)
         return;
     }
 
+    if (!s_ActiveSession->m_Reconnecting.load()) {
+        constexpr Uint64 RapidReconnectWindowMs = 15000;
+        constexpr int MaxRapidReconnects = 3;
+        const Uint64 completed = s_ActiveSession->m_LastReconnectCompletedTicks.load();
+        if (completed == 0 || SDL_GetTicks() - completed >= RapidReconnectWindowMs) {
+            s_ActiveSession->m_RapidReconnects.store(0);
+        } else if (s_ActiveSession->m_RapidReconnects.fetch_add(1) + 1 >= MaxRapidReconnects) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "PLANK stream ended %d times shortly after reconnecting; not reconnecting again",
+                         MaxRapidReconnects);
+            s_ActiveSession->m_CanReconnect.store(false);
+            s_ActiveSession->m_UnexpectedTermination = true;
+            emit s_ActiveSession->displayLaunchError(
+                        tr("The workstation stream keeps ending right after reconnecting, so the client stopped retrying. Check the workstation, then connect again."));
+            SDL_Event event = {};
+            event.type = SDL_EVENT_QUIT;
+            event.quit.timestamp = SDL_GetTicks();
+            SDL_PushEvent(&event);
+            return;
+        }
+    }
+
     if (s_ActiveSession->m_Computer->plankAuthentication &&
             s_ActiveSession->m_CanReconnect.load() &&
             !s_ActiveSession->m_Reconnecting.load() &&
@@ -3128,6 +3150,9 @@ bool Session::runPlankReconnect()
         return false;
     }
 
+    constexpr int MaxConsecutiveDenials = 2;
+    int consecutiveDenials = 0;
+    m_ReconnectFailureMessage.clear();
     for (int attempt = 1; !m_ReconnectCancelled.load(); ++attempt) {
         try {
             {
@@ -3144,7 +3169,14 @@ bool Session::runPlankReconnect()
             bool greeterConfirmed = false;
             const QString token = http.authenticate(
                         m_PlankUsername,
-                        m_PlankPassword, &greeterConfirmed);
+                        m_PlankPassword, &greeterConfirmed,
+                        [this](const QString& message) {
+                // For example a DUO push notice: without it the retained last
+                // frame looks like a hang while the host waits for approval.
+                m_OverlayManager.updateOverlayText(
+                            Overlay::OverlayStatusUpdate,
+                            QStringLiteral("Reconnecting to workstation...\n%1").arg(message).toUtf8().constData());
+            });
             if (greeterConfirmed &&
                     ((m_Computer->plankFeatureFlags & NvOutputTopology::AuthenticatedDesktopStageFeature) ||
                      m_Computer->plankFeatureFlags == NvOutputTopology::FixedCaptureFlags)) {
@@ -3200,6 +3232,13 @@ bool Session::runPlankReconnect()
                 m_ReconnectCancelled.store(true);
                 emit displayLaunchError(error.toQString());
             }
+            else if (error.getStatusCode() == 401 &&
+                    ++consecutiveDenials >= MaxConsecutiveDenials) {
+                // Retrying a refused sign-in only sends more second-factor
+                // prompts; report it instead.
+                m_ReconnectFailureMessage = QString::fromUtf8(error.getStatusMessage());
+                return false;
+            }
         } catch (const QtNetworkReplyException& error) {
             qWarning() << "PLANK reconnect attempt" << attempt
                        << "could not reach the host:" << error.toQString();
@@ -3249,6 +3288,7 @@ bool Session::finishPlankReconnect(
         }
         m_InputHandler->finishRawHidReconnect();
         m_UnexpectedTermination = false;
+        m_LastReconnectCompletedTicks.store(SDL_GetTicks());
     } else {
         m_UnexpectedTermination = true;
     }
@@ -4117,7 +4157,10 @@ void Session::execInternal()
                 if (!finishPlankReconnect(
                             reconnectSucceeded, reconnectState)) {
                     emit displayLaunchError(
-                                tr("The workstation desktop changed, but the client could not reconnect."));
+                                m_ReconnectFailureMessage.isEmpty() ?
+                                    tr("The workstation desktop changed, but the client could not reconnect.") :
+                                    tr("The workstation desktop changed, but signing in again failed: %1")
+                                        .arg(m_ReconnectFailureMessage));
                     goto DispatchDeferredCleanup;
                 }
                 break;
