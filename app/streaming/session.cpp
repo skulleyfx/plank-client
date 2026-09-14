@@ -3504,6 +3504,20 @@ public:
 
 void Session::exec(QWindow* qtWindow)
 {
+    // The stream segue can pass a null window when its attached Window
+    // property has not resolved yet. Fall back to the application's window
+    // so the stream still opens on the monitor the UI is on.
+    if (qtWindow == nullptr) {
+        qtWindow = QGuiApplication::focusWindow();
+    }
+    if (qtWindow == nullptr) {
+        for (QWindow* window : QGuiApplication::topLevelWindows()) {
+            if (window->isVisible()) {
+                qtWindow = window;
+                break;
+            }
+        }
+    }
     m_QtWindow = qtWindow;
 
     // Use a separate thread for the streaming session on X11 or Wayland
