@@ -710,10 +710,16 @@ private:
             }
             NvHTTP http(address);
             bool greeter = false;
+            // A manual sign-in never presents a ticket; it only receives one.
+            QString resumeTicket;
             const QString token = http.authenticate(
                         m_Username, m_Password, &greeter, [this](const QString& message) {
                 emit authenticationProgress(m_Computer, message);
-            });
+            }, &resumeTicket);
+            {
+                QWriteLocker lock(&m_Computer->lock);
+                m_Computer->plankResumeTicket = resumeTicket;
+            }
             NvOutputTopology topology;
             bool topologySupported;
             bool macDesktop;

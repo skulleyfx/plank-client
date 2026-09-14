@@ -3167,6 +3167,11 @@ bool Session::runPlankReconnect()
             }
             NvHTTP http(m_Computer);
             bool greeterConfirmed = false;
+            QString resumeTicket;
+            {
+                QReadLocker lock(&m_Computer->lock);
+                resumeTicket = m_Computer->plankResumeTicket;
+            }
             const QString token = http.authenticate(
                         m_PlankUsername,
                         m_PlankPassword, &greeterConfirmed,
@@ -3176,7 +3181,11 @@ bool Session::runPlankReconnect()
                 m_OverlayManager.updateOverlayText(
                             Overlay::OverlayStatusUpdate,
                             QStringLiteral("Reconnecting to workstation...\n%1").arg(message).toUtf8().constData());
-            });
+            }, &resumeTicket);
+            {
+                QWriteLocker lock(&m_Computer->lock);
+                m_Computer->plankResumeTicket = resumeTicket;
+            }
             if (greeterConfirmed &&
                     ((m_Computer->plankFeatureFlags & NvOutputTopology::AuthenticatedDesktopStageFeature) ||
                      m_Computer->plankFeatureFlags == NvOutputTopology::FixedCaptureFlags)) {

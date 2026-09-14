@@ -150,8 +150,12 @@ public:
 
     // onMessage receives host informational messages, such as a DUO push
     // notice, while authentication is in progress.
+    // resumeTicket, when given, is sent if non-empty and replaced with the
+    // host's new ticket after success. A valid ticket lets an automatic
+    // reconnect skip a repeat second factor. Keep it in memory only.
     QString authenticate(QString username, QString password, bool* greeterConfirmed = nullptr,
-                         const std::function<void(const QString&)>& onMessage = {});
+                         const std::function<void(const QString&)>& onMessage = {},
+                         QString* resumeTicket = nullptr);
     bool probeWorkerReplacement(const QString& instance, const QString& certificateSha256);
     QString workerInstance() const { return m_WorkerInstance; }
     NvOutputTopology getOutputTopology(QString* certificateSha256 = nullptr);

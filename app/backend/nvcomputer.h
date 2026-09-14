@@ -128,6 +128,8 @@ public:
     QString name;
     bool hasCustomName;
     QString uuid;
+    // Host-issued reconnect ticket; in memory only, never serialized.
+    QString plankResumeTicket;
     QVector<NvApp> appList;
     QString plankScalingMode;
     QString plankHostLayout;

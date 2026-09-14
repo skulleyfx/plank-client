@@ -611,7 +611,8 @@ bool NvHTTP::probeWorkerReplacement(const QString& instance, const QString& cert
 }
 
 QString NvHTTP::authenticate(QString username, QString password, bool* greeterConfirmed,
-                             const std::function<void(const QString&)>& onMessage)
+                             const std::function<void(const QString&)>& onMessage,
+                             QString* resumeTicket)
 {
     if (greeterConfirmed != nullptr) *greeterConfirmed = false;
     SecureStringGuard passwordGuard(password);
@@ -619,7 +620,11 @@ QString NvHTTP::authenticate(QString username, QString password, bool* greeterCo
         throw GfeHttpResponseException(400, "Invalid PLANK authentication state");
     }
 
-    QJsonObject result = postPlankJson("start", {{"username", username}});
+    QJsonObject start {{"username", username}};
+    if (resumeTicket != nullptr && !resumeTicket->isEmpty()) {
+        start.insert("resume_ticket", *resumeTicket);
+    }
+    QJsonObject result = postPlankJson("start", start);
     // Rounds that only relay host messages (for example while a DUO push
     // awaits approval) are bounded separately so a second factor has time.
     QString lastMessage;
@@ -633,6 +638,10 @@ QString NvHTTP::authenticate(QString username, QString password, bool* greeterCo
             }
             if (greeterConfirmed != nullptr) {
                 *greeterConfirmed = plankAuthenticatedGreeter(result);
+            }
+            if (resumeTicket != nullptr) {
+                resumeTicket->fill(QChar('\0'));
+                *resumeTicket = result.value("resume_ticket").toString();
             }
             return m_SessionToken;
         }
