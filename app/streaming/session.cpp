@@ -1848,6 +1848,9 @@ int Session::getTargetDisplayIndex() const
                         const int top = static_cast<int>(displayBounds.y * factor);
                         const int right = left + static_cast<int>(displayBounds.w * factor);
                         const int bottom = top + static_cast<int>(displayBounds.h * factor);
+                        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                    "Qt UI monitor centre (%d,%d); SDL display %d bounds (%d,%d %dx%d) x%.2f",
+                                    centerX, centerY, i, left, top, right - left, bottom - top, factor);
                         if (centerX >= left && centerX < right && centerY >= top && centerY < bottom) {
                             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                                         "Windows placed the Qt UI on SDL display %d", i);
@@ -1856,6 +1859,12 @@ int Session::getTargetDisplayIndex() const
                     }
                 }
             }
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Windows could not match the Qt UI monitor to an SDL display");
+        }
+        else {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "No Qt window to choose the stream display from");
         }
 #endif
         if (m_QtWindow != nullptr) {
@@ -1893,6 +1902,8 @@ int Session::getTargetDisplayIndex() const
         }
     }
 
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "Stream target display index: %d", displayIndex);
     return displayIndex;
 }
 
