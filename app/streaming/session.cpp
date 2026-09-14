@@ -1822,6 +1822,42 @@ int Session::getTargetDisplayIndex() const
     // Create our window on the same display that Qt's UI
     // was being displayed on.
     else {
+#ifdef Q_OS_WIN32
+        // Qt and SDL describe monitor positions in different units when
+        // monitors use different scaling, so exact geometry matching below
+        // falls back to the first display. Ask Windows which monitor holds the
+        // Qt window and pick the SDL display that contains its centre.
+        if (m_QtWindow != nullptr) {
+            const HMONITOR monitor = MonitorFromWindow(
+                        reinterpret_cast<HWND>(m_QtWindow->winId()), MONITOR_DEFAULTTONEAREST);
+            MONITORINFO info = {};
+            info.cbSize = sizeof(info);
+            if (monitor != nullptr && GetMonitorInfoW(monitor, &info)) {
+                const int centerX = (info.rcMonitor.left + info.rcMonitor.right) / 2;
+                const int centerY = (info.rcMonitor.top + info.rcMonitor.bottom) / 2;
+                for (int i = 0; i < StreamUtils::getDisplayCount(); i++) {
+                    SDL_Rect displayBounds;
+                    if (!SDL_GetDisplayBounds(StreamUtils::getDisplayId(i), &displayBounds)) {
+                        continue;
+                    }
+                    // SDL reports bounds either in physical pixels or scaled
+                    // by the display's content scale; accept either.
+                    const float scale = SDL_GetDisplayContentScale(StreamUtils::getDisplayId(i));
+                    for (const float factor : {1.0f, scale > 0.0f ? scale : 1.0f}) {
+                        const int left = static_cast<int>(displayBounds.x * factor);
+                        const int top = static_cast<int>(displayBounds.y * factor);
+                        const int right = left + static_cast<int>(displayBounds.w * factor);
+                        const int bottom = top + static_cast<int>(displayBounds.h * factor);
+                        if (centerX >= left && centerX < right && centerY >= top && centerY < bottom) {
+                            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                        "Windows placed the Qt UI on SDL display %d", i);
+                            return i;
+                        }
+                    }
+                }
+            }
+        }
+#endif
         if (m_QtWindow != nullptr) {
             QScreen* screen = m_QtWindow->screen();
             if (screen != nullptr) {
@@ -2193,6 +2229,12 @@ bool Session::configurePlankHostLayout()
     if (layoutPolicy == NvOutputTopology::MatchClientHostLayout) {
         QVector<NvClientDisplay> displays;
         for (const auto& display : std::as_const(m_ClientDisplays)) {
+            // Without multi-display presentation the stream occupies only the
+            // target monitor, so match that monitor alone. Otherwise a client
+            // with more than two monitors could never use this policy.
+            if (!m_UseMultiDisplayPresentation && display.displayId != m_TargetDisplayId) {
+                continue;
+            }
             displays.append({QRect(display.logicalBounds.x,
                                    display.logicalBounds.y,
                                    display.logicalBounds.w,
