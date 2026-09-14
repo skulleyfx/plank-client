@@ -4020,6 +4020,10 @@ void Session::execInternal()
                         m_CurrentRenderedFps.load(std::memory_order_relaxed),
                         m_CurrentVideoMbps.load(std::memory_order_relaxed),
                         currentVideoFecLoss().before);
+            {
+                const auto rttMs = m_CurrentNetworkRttMs.load(std::memory_order_relaxed);
+                m_PlankToolbar->setNetworkLatencyMs(rttMs == 0 ? -1 : static_cast<int>(rttMs));
+            }
             const auto action = m_PlankToolbar->update(
                         SDL_GetTicks(), !m_Reconnecting.load());
             if (action == PlankToolbar::Action::Disconnect) {

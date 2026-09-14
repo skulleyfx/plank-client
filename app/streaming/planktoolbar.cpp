@@ -23,7 +23,8 @@
 #endif
 
 namespace {
-constexpr int ToolbarPreferredWidth = 539;
+// Widened by 56 px for the latency field.
+constexpr int ToolbarPreferredWidth = 595;
 constexpr int ToolbarHeight = 39;
 constexpr int EdgeRevealHeight = 3;
 constexpr Uint32 EdgeActivationDelayMs = 1000;
@@ -118,6 +119,8 @@ PlankToolbar::PlankToolbar(
       m_RenderedFps(0.0f),
       m_VideoMbps(0.0f),
       m_PacketLossPercent(-1.0f),
+      m_NetworkLatencyMs(-1),
+      m_LastDrawnNetworkLatencyMs(-2),
       m_LastDrawnFps(-1.0f),
       m_LastDrawnVideoMbps(-1.0f),
       m_LastDrawnPacketLossPercent(-2.0f),
@@ -207,6 +210,11 @@ void PlankToolbar::setRenderedStats(
                 -1.0f : qBound(0.0f, packetLossPercent, 100.0f);
 }
 
+void PlankToolbar::setNetworkLatencyMs(int latencyMs)
+{
+    m_NetworkLatencyMs = latencyMs < 0 ? -1 : latencyMs;
+}
+
 void PlankToolbar::setAppliedBitrate(
         int requestedKbps, int appliedKbps, int peakKbps)
 {
@@ -260,7 +268,8 @@ PlankToolbar::Action PlankToolbar::update(
             (std::fabs(m_RenderedFps - m_LastDrawnFps) >= 0.05f ||
              std::fabs(m_VideoMbps - m_LastDrawnVideoMbps) >= 0.05f ||
              std::fabs(m_PacketLossPercent -
-                       m_LastDrawnPacketLossPercent) >= 0.05f)) {
+                       m_LastDrawnPacketLossPercent) >= 0.05f ||
+             m_NetworkLatencyMs != m_LastDrawnNetworkLatencyMs)) {
         redraw();
     }
 
@@ -849,11 +858,22 @@ void PlankToolbar::redraw()
                          QString("%1%").arg(m_PacketLossPercent, 0, 'f',
                                              VideoPacketLossDisplayDecimalPlaces));
 
+    // Network round trip between this client and the host.
+    painter.setFont(labelFont);
+    painter.setPen(QColor(151, 161, 174));
+    painter.drawText(QRect(229, 5, 52, 12), Qt::AlignLeft | Qt::AlignVCenter,
+                     "Latency");
+    painter.setFont(valueFont);
+    painter.setPen(m_NetworkLatencyMs < 0 ? QColor(112, 120, 130) : QColor(246, 248, 250));
+    painter.drawText(QRect(229, 16, 52, 17), Qt::AlignLeft | Qt::AlignVCenter,
+                     m_NetworkLatencyMs < 0 ? QString("--") :
+                                              QString("%1 ms").arg(m_NetworkLatencyMs));
+
     QFont targetFont = labelFont;
     targetFont.setPixelSize(12);
     painter.setFont(targetFont);
     painter.setPen(m_BitrateSupported ? QColor(235, 239, 244) : QColor(135, 143, 153));
-    painter.drawText(QRect(229, 3, 190, 17), Qt::AlignLeft | Qt::AlignVCenter,
+    painter.drawText(QRect(285, 3, 190, 17), Qt::AlignLeft | Qt::AlignVCenter,
                      QString("Encoder target  %1 Mbps").arg(m_BitrateKbps / 1000.0, 0, 'f', 1));
 
     const int trackLeft = sliderLeft() - toolbarLeft();
@@ -967,6 +987,7 @@ void PlankToolbar::redraw()
     painter.end();
     m_LastDrawnFps = m_RenderedFps;
     m_LastDrawnVideoMbps = m_VideoMbps;
+    m_LastDrawnNetworkLatencyMs = m_NetworkLatencyMs;
     m_LastDrawnPacketLossPercent = m_PacketLossPercent;
     m_LastRedrawTime = SDL_GetTicks();
     if (m_WaylandToolbar) {
@@ -1374,10 +1395,10 @@ int PlankToolbar::toolbarLeft() const
 
 int PlankToolbar::sliderLeft() const
 {
-    return toolbarLeft() + 229;
+    return toolbarLeft() + 285;
 }
 
 int PlankToolbar::sliderRight() const
 {
-    return toolbarLeft() + std::max(191, m_Width - 113);
+    return toolbarLeft() + std::max(247, m_Width - 113);
 }
