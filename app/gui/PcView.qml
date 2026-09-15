@@ -201,6 +201,15 @@ CenteredGridView {
                 font.pointSize: 10
                 elide: Text.ElideRight
             }
+
+            Label {
+                width: parent.width
+                visible: model.signedInUser !== ""
+                text: qsTr("Signed in: %1").arg(model.signedInUser)
+                color: theme.textSecondary
+                font.pointSize: 9
+                elide: Text.ElideRight
+            }
         }
 
         Column {
@@ -214,9 +223,11 @@ CenteredGridView {
             Label {
                 width: parent.width
                 text: model.statusUnknown ? qsTr("Checking") :
-                      (model.online ? qsTr("Online") : qsTr("Offline"))
+                      (model.inUse ? qsTr("In use") :
+                       (model.online ? qsTr("Online") : qsTr("Offline")))
                 color: model.statusUnknown ? theme.textSecondary :
-                       (model.online ? theme.success : theme.textDisabled)
+                       (model.inUse ? theme.warning :
+                        (model.online ? theme.success : theme.textDisabled))
                 font.pointSize: 11
                 font.weight: Font.DemiBold
                 horizontalAlignment: Text.AlignRight
@@ -225,8 +236,10 @@ CenteredGridView {
             Label {
                 width: parent.width
                 text: model.plankHostVersion ?
-                          model.plankHostVersion : " "
-                color: theme.textSecondary
+                          (model.clientUpdateAvailable ?
+                               qsTr("Host %1 · update this client").arg(model.plankHostVersion) :
+                               qsTr("Host %1").arg(model.plankHostVersion)) : " "
+                color: model.clientUpdateAvailable ? theme.warning : theme.textSecondary
                 font.pointSize: 9
                 horizontalAlignment: Text.AlignRight
                 elide: Text.ElideLeft

@@ -16,7 +16,10 @@ class ComputerModel : public QAbstractListModel
         StatusUnknownRole,
         PlankHostVersionRole,
         ManualBookmarkRole,
-        AddressRole
+        AddressRole,
+        InUseRole,
+        SignedInUserRole,
+        ClientUpdateRole
     };
 
 public:

@@ -4,7 +4,38 @@
 
 #include <utility>
 
+#include <QRegularExpression>
+
+#ifndef PLANK_VERSION_STR
+#define PLANK_VERSION_STR "development"
+#endif
+
 namespace {
+// True when the host reports a newer PLANK version than this client. Windows
+// builds carry a fourth, build-revision field; it is compared only when this
+// client has one, so clients of other platforms are not told to update for
+// a Windows-only revision.
+bool hostVersionIsNewer(const QString& hostVersion)
+{
+    const QRegularExpression pattern(QStringLiteral("^(\\d+(?:\\.\\d+)*)"));
+    const auto hostMatch = pattern.match(hostVersion);
+    const auto clientMatch = pattern.match(QString::fromLatin1(PLANK_VERSION_STR));
+    if (!hostMatch.hasMatch() || !clientMatch.hasMatch()) {
+        return false;
+    }
+    const QStringList host = hostMatch.captured(1).split('.');
+    const QStringList client = clientMatch.captured(1).split('.');
+    const int fields = client.size() >= 4 ? 4 : 3;
+    for (int i = 0; i < fields; i++) {
+        const int h = i < host.size() ? host.at(i).toInt() : 0;
+        const int c = i < client.size() ? client.at(i).toInt() : 0;
+        if (h != c) {
+            return h > c;
+        }
+    }
+    return false;
+}
+
 QString hostLayoutFromChoice(int choice)
 {
     switch (choice) {
@@ -65,6 +96,12 @@ QVariant ComputerModel::data(const QModelIndex& index, int role) const
                     computer->plankHostVersion : QString();
     case ManualBookmarkRole:
         return computer->manualBookmark;
+    case InUseRole:
+        return computer->state == NvComputer::CS_ONLINE && computer->plankStreamActive;
+    case SignedInUserRole:
+        return computer->state == NvComputer::CS_ONLINE ? computer->plankSignedInUser : QString();
+    case ClientUpdateRole:
+        return computer->plankHostMetadataVersion >= 1 && hostVersionIsNewer(computer->plankHostVersion);
     case AddressRole:
         // New PLANK bookmarks have a durable manual address, but
         // workstation records created before bookmarks do not. Never expose
@@ -112,6 +149,9 @@ QHash<int, QByteArray> ComputerModel::roleNames() const
     names[PlankHostVersionRole] = "plankHostVersion";
     names[ManualBookmarkRole] = "manualBookmark";
     names[AddressRole] = "address";
+    names[InUseRole] = "inUse";
+    names[SignedInUserRole] = "signedInUser";
+    names[ClientUpdateRole] = "clientUpdateAvailable";
 
     return names;
 }

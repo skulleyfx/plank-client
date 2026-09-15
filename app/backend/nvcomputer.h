@@ -115,6 +115,8 @@ public:
     bool plankAuthentication = false;
     int plankHostMetadataVersion = 0;
     QString plankHostVersion;
+    bool plankStreamActive = false;
+    QString plankSignedInUser;  // Only sent to admin-group accounts.
     QString sessionToken;
     int plankTopologyVersion = 0;
     int plankFeatureFlags = 0;

@@ -94,6 +94,8 @@ bool NvComputer::updateManualBookmark(NvAddress address, QString nickname,
         plankAuthentication = false;
         plankHostMetadataVersion = 0;
         plankHostVersion.clear();
+        plankStreamActive = false;
+        plankSignedInUser.clear();
         plankTopologyVersion = 0;
         plankFeatureFlags = 0;
         displayModes.clear();
@@ -212,6 +214,8 @@ NvComputer::NvComputer(QSettings& settings)
     this->plankAuthentication = false;
     this->plankHostMetadataVersion = 0;
     this->plankHostVersion.clear();
+    this->plankStreamActive = false;
+    this->plankSignedInUser.clear();
     this->plankTopologyVersion = 0;
     this->plankFeatureFlags = 0;
     this->sessionToken.clear();
@@ -356,6 +360,10 @@ NvComputer::NvComputer(NvHTTP& http, QString serverInfo)
             NvHTTP::getXmlString(serverInfo, "PlankHostMetadataVersion").toInt();
     this->plankHostVersion =
             NvHTTP::getXmlString(serverInfo, "PlankHostVersion");
+    this->plankStreamActive =
+            NvHTTP::getXmlString(serverInfo, "PlankStreamActive") == "1";
+    this->plankSignedInUser =
+            NvHTTP::getXmlString(serverInfo, "PlankSignedInUser");
     this->plankTopologyVersion =
             NvHTTP::getXmlString(serverInfo, "PlankTopologyVersion").toInt();
     this->plankFeatureFlags =
@@ -607,6 +615,8 @@ bool NvComputer::update(const NvComputer& that, NvAddress expectedAddress)
     ASSIGN_IF_CHANGED(plankAuthentication);
     ASSIGN_IF_CHANGED(plankHostMetadataVersion);
     ASSIGN_IF_CHANGED(plankHostVersion);
+    ASSIGN_IF_CHANGED(plankStreamActive);
+    ASSIGN_IF_CHANGED(plankSignedInUser);
     ASSIGN_IF_CHANGED(plankTopologyVersion);
     ASSIGN_IF_CHANGED(plankFeatureFlags);
     if (plankAuthentication && sessionToken.isEmpty()) {
