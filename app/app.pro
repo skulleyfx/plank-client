@@ -636,7 +636,7 @@ unix:!macx: {
     INSTALLS += target desktop icons appstream
 }
 win32 {
-    RC_ICONS = moonlight.ico
+    RC_ICONS = plank-client.ico
     QMAKE_TARGET_COMPANY = Instinctual
     QMAKE_TARGET_DESCRIPTION = PLANK Client
     QMAKE_TARGET_PRODUCT = PLANK
