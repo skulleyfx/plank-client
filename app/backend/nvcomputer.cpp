@@ -23,6 +23,7 @@
 #define SER_CUSTOMNAME "customname"
 #define SER_PLANK_SCALING_MODE "plank-scaling-mode"
 #define SER_HOSTLAYOUT "plank-host-layout"
+#define SER_HOSTLAYOUT_CHOSEN "plank-host-layout-chosen"
 #define SER_PLANK_TWO_SCREENS "plankTwoScreens"
 #define SER_VIRTUALMODE1 "plank-virtual-mode-1"
 #define SER_VIRTUALMODE2 "plank-virtual-mode-2"
@@ -108,6 +109,8 @@ bool NvComputer::updateManualBookmark(NvAddress address, QString nickname,
     hasCustomName = true;
     plankScalingMode = scalingMode;
     plankHostLayout = hostLayout;
+    // Picked in the bookmark editor, so stop following the host.
+    plankHostLayoutChosen = true;
     plankVirtualMode1 = virtualMode1;
     plankVirtualMode2 = virtualMode2;
     plankVideoProfile = videoProfile;
@@ -147,6 +150,8 @@ NvComputer::NvComputer(QSettings& settings)
         this->plankHostLayout = NvOutputTopology::MatchClientHostLayout;
     }
     this->plankTwoScreens = settings.value(SER_PLANK_TWO_SCREENS, false).toBool();
+    this->plankHostLayoutChosen =
+            settings.value(SER_HOSTLAYOUT_CHOSEN, false).toBool();
     this->plankVirtualMode1 =
             settings.value(SER_VIRTUALMODE1, QStringLiteral("3840x2160")).toString();
     this->plankVirtualMode2 =
@@ -241,6 +246,7 @@ void NvComputer::serialize(QSettings& settings, bool serializeApps) const
     settings.remove("srvcert");
     settings.setValue(SER_PLANK_SCALING_MODE, plankScalingMode);
     settings.setValue(SER_HOSTLAYOUT, plankHostLayout);
+    settings.setValue(SER_HOSTLAYOUT_CHOSEN, plankHostLayoutChosen);
     settings.setValue(SER_PLANK_TWO_SCREENS, plankTwoScreens);
     settings.setValue(SER_VIRTUALMODE1, plankVirtualMode1);
     settings.setValue(SER_VIRTUALMODE2, plankVirtualMode2);
@@ -504,6 +510,46 @@ NvComputer::ReachabilityType NvComputer::getActiveAddressReachability(
     }
 }
 
+bool NvComputer::applyDerivedHostLayout()
+{
+    if (plankHostLayoutChosen || plankFeatureFlags == 0) {
+        // Either the layout is the user's own choice, or this host has not
+        // said anything about itself yet.
+        return false;
+    }
+    if (plankCaptureSource ==
+            StreamingPreferences::PLANK_CAPTURE_SCREENCAPTUREKIT) {
+        // A Mac host streams a display it creates itself, and its pairing of
+        // match-client with the fixed layout is settled when it is loaded.
+        return false;
+    }
+
+    // Only our own Windows host composites two displays into one picture, so
+    // only it has a reason to match the client's monitors. Asking any other
+    // host to match them makes it rearrange its screens for a picture we
+    // would never split, and on Alan's Linux host that arrangement can hang
+    // the session. A host offering physical displays streams them as they
+    // are; a headless one keeps match-client, which is how it decides what
+    // virtual displays to build.
+    QString derived = QString::fromLatin1(NvOutputTopology::MatchClientHostLayout);
+    const bool hostSpansDisplays =
+            (plankFeatureFlags & NvOutputTopology::TwoScreenCaptureFeature) != 0;
+    if (!hostSpansDisplays &&
+            (!outputTopology.displayPolicyKnown() ||
+             outputTopology.allowedLayoutKinds.contains(
+                 QLatin1String(NvOutputTopology::PhysicalHostLayout)))) {
+        derived = QString::fromLatin1(NvOutputTopology::PhysicalHostLayout);
+    }
+
+    if (plankHostLayout == derived) {
+        return false;
+    }
+    qInfo() << "PLANK host layout for" << name << "follows the host:"
+            << plankHostLayout << "->" << derived;
+    plankHostLayout = derived;
+    return true;
+}
+
 bool NvComputer::updateAppList(QVector<NvApp> newAppList) {
     if (appList == newAppList) {
         return false;
@@ -622,6 +668,9 @@ bool NvComputer::update(const NvComputer& that, NvAddress expectedAddress)
     ASSIGN_IF_CHANGED(plankSignedInUser);
     ASSIGN_IF_CHANGED(plankTopologyVersion);
     ASSIGN_IF_CHANGED(plankFeatureFlags);
+    if (applyDerivedHostLayout()) {
+        changed = true;
+    }
     if (plankAuthentication && sessionToken.isEmpty()) {
         if (authorizationState != AS_UNAUTHORIZED) {
             authorizationState = AS_UNAUTHORIZED;

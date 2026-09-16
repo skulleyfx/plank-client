@@ -748,25 +748,9 @@ Flickable {
                 // and two-monitor workstations, and a setting that spans them
                 // all cannot be right for both.
 
-                PlankSettingLabel {
-                    text: qsTr("Keep the stream toolbar on screen")
-                }
-
-                PlankCheckBox {
-                    id: toolbarPinnedCheck
-                    Layout.alignment: Qt.AlignLeft | Qt.AlignVCenter
-                    text: ""
-                    Accessible.name: qsTr("Keep the stream toolbar on screen")
-                    checked: StreamingPreferences.plankToolbarPinned
-                    onCheckedChanged: {
-                        StreamingPreferences.plankToolbarPinned = checked
-                    }
-
-                    ToolTip.delay: 1000
-                    ToolTip.timeout: 5000
-                    ToolTip.visible: hovered
-                    ToolTip.text: qsTr("When off, the toolbar hides a few seconds after you stop using it, and returns when you move the pointer to the top of the screen.")
-                }
+                // Keeping the toolbar on screen is the thumbtack on the toolbar
+                // itself, and it lasts only for that session. A remembered pin
+                // left the toolbar on screen for good after one stray click.
             }
         }
     }

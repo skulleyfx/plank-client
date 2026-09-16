@@ -32,6 +32,11 @@ private:
 
     bool updateAppList(QVector<NvApp> newAppList);
 
+    // Pick the host layout that suits this host, unless the layout was chosen
+    // by hand. Call with the lock held after the host's feature flags or
+    // topology change. Returns true when the layout changed.
+    bool applyDerivedHostLayout();
+
 public:
     NvComputer() = default;
 
@@ -138,6 +143,10 @@ public:
     // Per workstation, per client machine: use two of this computer's
     // monitors for this workstation. Off until the artist turns it on.
     bool plankTwoScreens = false;
+
+    // True once the layout was picked by hand in the bookmark editor. Until
+    // then the layout follows the host: see applyDerivedHostLayout().
+    bool plankHostLayoutChosen = false;
     QString plankVirtualMode1;
     QString plankVirtualMode2;
     int plankVideoProfile = 0;

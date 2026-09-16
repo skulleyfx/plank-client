@@ -81,8 +81,11 @@ PlankToolbar::PlankToolbar(
       m_InputHandler(inputHandler),
       m_Preferences(preferences),
       m_PendingAction(Action::None),
-      m_Visible(preferences.plankToolbarPinned),
-      m_Pinned(preferences.plankToolbarPinned),
+      // The pin lasts for this session only. Every session starts with the
+      // toolbar hidden, so a stray click on the thumbtack cannot leave it on
+      // screen for good.
+      m_Visible(false),
+      m_Pinned(false),
       m_DraggingToolbar(false),
       m_DraggingSlider(false),
       m_PointerInside(false),
@@ -632,8 +635,6 @@ PlankToolbar::Action PlankToolbar::handlePointerButton(
         switch (pressedControl) {
         case Control::Pin:
             m_Pinned = !m_Pinned;
-            m_Preferences.plankToolbarPinned = m_Pinned;
-            m_Preferences.save();
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "PLANK toolbar %s", m_Pinned ? "pinned" : "unpinned");
             redraw();

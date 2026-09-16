@@ -750,6 +750,10 @@ private:
                     qInfo() << "PLANK retained scaling mode"
                             << m_Computer->plankScalingMode
                             << "for topology generation" << topology.generation;
+                    // The topology says whether this host offers physical
+                    // displays, which can settle the layout we derived from
+                    // the feature flags alone.
+                    m_Computer->applyDerivedHostLayout();
                 }
                 m_Computer->updateAppList(apps);
             }

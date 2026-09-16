@@ -13,7 +13,6 @@
 #define SER_VSYNC "vsync"
 #define SER_HOSTAUDIO "hostaudio"
 #define SER_AUDIOCFG "audiocfg"
-#define SER_PLANK_TOOLBAR_PINNED "planktoolbarpinned"
 #define SER_PLANK_CLIPBOARD_TEXT "plankclipboardtext"
 #define SER_WINDOWMODE "windowmode"
 #define SER_MDNS "mdns"
@@ -81,7 +80,6 @@ void StreamingPreferences::reload()
 
     fps = settings.value(SER_FPS, 60).toInt();
     identityGbrBitDepth = 10;
-    plankToolbarPinned = settings.value(SER_PLANK_TOOLBAR_PINNED, false).toBool();
     plankClipboardText = settings.value(SER_PLANK_CLIPBOARD_TEXT, true).toBool();
     // Off by default: a first connection always uses one screen.
     enableVsync = settings.value(SER_VSYNC, true).toBool();
@@ -262,7 +260,6 @@ void StreamingPreferences::save()
                       static_cast<int>(plankUnreachableAction));
     settings.setValue(SER_SHOWPERFOVERLAY, showPerformanceOverlay);
     settings.setValue(SER_AUDIOCFG, static_cast<int>(audioConfig));
-    settings.setValue(SER_PLANK_TOOLBAR_PINNED, plankToolbarPinned);
     settings.setValue(SER_PLANK_CLIPBOARD_TEXT, plankClipboardText);
     settings.setValue(SER_WINDOWMODE, static_cast<int>(windowMode));
     settings.setValue(SER_LANGUAGE, static_cast<int>(language));

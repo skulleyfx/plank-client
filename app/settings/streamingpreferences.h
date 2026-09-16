@@ -275,7 +275,6 @@ public:
     Q_PROPERTY(PlankUnreachableAction plankUnreachableAction MEMBER plankUnreachableAction NOTIFY plankUnreachableActionChanged)
     Q_PROPERTY(bool showPerformanceOverlay MEMBER showPerformanceOverlay NOTIFY showPerformanceOverlayChanged)
     Q_PROPERTY(AudioConfig audioConfig MEMBER audioConfig NOTIFY audioConfigChanged)
-    Q_PROPERTY(bool plankToolbarPinned MEMBER plankToolbarPinned NOTIFY plankToolbarPinnedChanged)
     Q_PROPERTY(bool plankClipboardText MEMBER plankClipboardText NOTIFY plankClipboardTextChanged)
     Q_PROPERTY(WindowMode windowMode MEMBER windowMode NOTIFY windowModeChanged)
     Q_PROPERTY(WindowMode recommendedFullScreenMode MEMBER recommendedFullScreenMode CONSTANT)
@@ -328,7 +327,6 @@ public:
     PlankUnreachableAction plankUnreachableAction;
     AudioConfig audioConfig;
     int identityGbrBitDepth;
-    bool plankToolbarPinned;
     bool plankClipboardText;
     WindowMode windowMode;
     WindowMode recommendedFullScreenMode;
@@ -342,7 +340,6 @@ signals:
     void unsupportedFpsChanged();
     void enableMdnsChanged();
     void audioConfigChanged();
-    void plankToolbarPinnedChanged();
     void plankClipboardTextChanged();
     void windowModeChanged();
     void connectionWarningsChanged();
