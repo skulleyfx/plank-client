@@ -143,6 +143,7 @@ private:
     float m_PacketLossPercent;
     int m_NetworkLatencyMs;
     int m_LastDrawnNetworkLatencyMs;
+    Uint64 m_LastStayLogTime;
     float m_LastDrawnFps;
     float m_LastDrawnVideoMbps;
     float m_LastDrawnPacketLossPercent;

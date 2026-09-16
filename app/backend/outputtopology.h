@@ -59,6 +59,8 @@ struct NvOutputTopology
     static const int FixedCaptureFeature = 0x80000;
     static const int MacDesktopPreparationFeature = 0x100000;
     static const int MacEncodingProfileFeature = 0x200000;
+    // Plain-text clipboard sharing, both directions. Windows hosts only today.
+    static const int ClipboardTextFeature = 0x400000;
     static const int FixedCaptureFlags = FixedCaptureFeature | OutputTopologyFeature |
             TopologyGenerationFeature | HostLayoutMetadataFeature | CompositeSourceRegionsFeature |
             MacDesktopPreparationFeature | MacEncodingProfileFeature;
@@ -81,7 +83,8 @@ struct NvOutputTopology
                                              SessionTakeoverFeature |
                                              DesktopHandoffNoticeFeature |
                                              AuthenticatedDesktopStageFeature |
-                                             WorkerInstanceFeature;
+                                             WorkerInstanceFeature |
+                                             ClipboardTextFeature;
     static const char* NativeScalingMode;
     static const char* ScaledSpanMode;
     static const char* MatchClientHostLayout;

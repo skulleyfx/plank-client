@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QMutex>
 #include <QSemaphore>
 #include <QSize>
 #include <QStringList>
@@ -454,6 +455,16 @@ private:
     std::atomic<float> m_CurrentVideoMbps;
     VideoFecLossPercent m_CurrentVideoFecLoss;
     std::atomic<std::uint32_t> m_CurrentNetworkRttMs;
+    // Plain-text clipboard sharing. Text only, and only with hosts that
+    // advertise the feature; see NvOutputTopology::ClipboardTextFeature.
+    static const std::uint16_t PlankClipboardTextEvent = 5;
+    void pollLocalClipboard(Uint64 now);
+    static const int PlankClipboardMaxBytes = 60000;
+    bool m_PlankClipboardEnabled = false;
+    QMutex m_PlankClipboardLock;
+    QString m_PlankClipboardIncoming;
+    QString m_PlankClipboardLastSeen;
+    Uint64 m_PlankClipboardNextPoll = 0;
     mutable std::mutex m_VideoPacketLossSamplesLock;
     VideoPacketLossPeakWindow m_VideoPacketLossPeakWindow;
     VideoPacketLossPeakWindow m_VideoPacketLossAfterFecPeakWindow;

@@ -49,6 +49,7 @@
 #define SDL_CODE_PLANK_TABLET_CURSOR 108
 #define SDL_CODE_PLANK_CURSOR_POSITION 109
 #define SDL_CODE_PLANK_REPLANK_COMPLETE 110
+#define SDL_CODE_PLANK_CLIPBOARD_TEXT 111
 
 #include <QtEndian>
 #include <QCoreApplication>
@@ -1440,6 +1441,25 @@ void Session::plankTransportDataReceiveLoop()
             LiNotifyPlankCursorPosition(
                         event.payload, event.payload_size);
             break;
+        case PlankClipboardTextEvent:
+            if (!m_PlankClipboardEnabled) {
+                LiNotifyPlankHostTermination(-1);
+                return;
+            }
+            if (event.payload_size > 0 &&
+                    event.payload_size <= PlankClipboardMaxBytes) {
+                {
+                    QMutexLocker locker(&m_PlankClipboardLock);
+                    m_PlankClipboardIncoming = QString::fromUtf8(
+                                reinterpret_cast<const char*>(event.payload),
+                                event.payload_size);
+                }
+                SDL_Event clipboardEvent = {};
+                clipboardEvent.type = SDL_EVENT_USER;
+                clipboardEvent.user.code = SDL_CODE_PLANK_CLIPBOARD_TEXT;
+                SDL_PushEvent(&clipboardEvent);
+            }
+            break;
         default:
             qWarning() << "Rejected unexpected native KyProto event type"
                        << event.type;
@@ -1447,6 +1467,61 @@ void Session::plankTransportDataReceiveLoop()
             return;
         }
     }
+}
+
+void Session::pollLocalClipboard(Uint64 now)
+{
+#ifdef PLANK_TRANSPORT
+    if (!m_PlankClipboardEnabled || m_PlankTransportEndpoint == nullptr) {
+        return;
+    }
+    if (now < m_PlankClipboardNextPoll) {
+        return;
+    }
+    m_PlankClipboardNextPoll = now + 250;
+
+    if (!SDL_HasClipboardText()) {
+        return;
+    }
+    char* clipboard = SDL_GetClipboardText();
+    if (clipboard == nullptr) {
+        return;
+    }
+    const QString text = QString::fromUtf8(clipboard);
+    SDL_free(clipboard);
+
+    const QByteArray utf8 = text.toUtf8();
+    if (text.isEmpty() || text == m_PlankClipboardLastSeen ||
+            utf8.size() > PlankClipboardMaxBytes) {
+        if (utf8.size() > PlankClipboardMaxBytes) {
+            m_PlankClipboardLastSeen = text;  // too large; do not retry every poll
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Clipboard text is %lld bytes; too large to share",
+                        static_cast<long long>(utf8.size()));
+        }
+        return;
+    }
+    m_PlankClipboardLastSeen = text;
+
+    QByteArray packet(PLANK_TRANSPORT_EVENT_HEADER_SIZE + utf8.size(), Qt::Uninitialized);
+    size_t packetSize = 0;
+    if (plank_transport_event_encode(
+                PlankClipboardTextEvent,
+                reinterpret_cast<const uint8_t*>(utf8.constData()),
+                static_cast<size_t>(utf8.size()),
+                reinterpret_cast<uint8_t*>(packet.data()),
+                static_cast<size_t>(packet.size()), &packetSize) != 0) {
+        return;
+    }
+    if (plank_transport_native_data_send(
+                m_PlankTransportEndpoint,
+                reinterpret_cast<const uint8_t*>(packet.constData()),
+                packetSize) != PLANK_TRANSPORT_OK) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Couldn't send clipboard text to the host");
+    }
+#else
+    Q_UNUSED(now)
+#endif
 }
 
 int Session::plankTransportNativeControlSender(void* context, uint32_t type,
@@ -2992,6 +3067,9 @@ bool Session::startConnectionAsync(bool reconnecting,
         // setup fails afterward, the next bounded attempt must resume this
         // app instead of issuing a second launch request.
         if (m_Computer->plankAuthentication) {
+            m_PlankClipboardEnabled =
+                    m_Preferences->plankClipboardText &&
+                    (m_Computer->plankFeatureFlags & NvOutputTopology::ClipboardTextFeature) != 0;
             m_PlankWorkerInstance = (m_Computer->plankFeatureFlags & NvOutputTopology::WorkerInstanceFeature) ?
                         http->workerInstance() : QString();
             m_PlankHostCertificateSha256 = plankTransportCertificateSha256;
@@ -3990,6 +4068,20 @@ void Session::execInternal()
                 m_InputHandler->applyPendingRemoteCursorPosition();
             }
             return true;
+        case SDL_CODE_PLANK_CLIPBOARD_TEXT: {
+            QString text;
+            {
+                QMutexLocker locker(&m_PlankClipboardLock);
+                text = m_PlankClipboardIncoming;
+                m_PlankClipboardIncoming.clear();
+            }
+            if (!text.isEmpty()) {
+                // Remember it so the next poll does not send it straight back.
+                m_PlankClipboardLastSeen = text;
+                SDL_SetClipboardText(text.toUtf8().constData());
+            }
+            return true;
+        }
         default:
             return false;
         }
@@ -4040,6 +4132,8 @@ void Session::execInternal()
         } else {
             earlyWaitingVisible = false;
         }
+        pollLocalClipboard(SDL_GetTicks());
+
         if (m_PlankToolbar) {
             m_PlankToolbar->setRenderedStats(
                         m_CurrentRenderedFps.load(std::memory_order_relaxed),

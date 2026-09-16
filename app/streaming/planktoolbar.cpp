@@ -121,6 +121,7 @@ PlankToolbar::PlankToolbar(
       m_PacketLossPercent(-1.0f),
       m_NetworkLatencyMs(-1),
       m_LastDrawnNetworkLatencyMs(-2),
+      m_LastStayLogTime(0),
       m_LastDrawnFps(-1.0f),
       m_LastDrawnVideoMbps(-1.0f),
       m_LastDrawnPacketLossPercent(-2.0f),
@@ -251,6 +252,20 @@ PlankToolbar::Action PlankToolbar::update(
             m_PointerY <= EdgeRevealHeight &&
             now >= m_EdgeHoverStartTime + EdgeActivationDelayMs) {
         show(now);
+    }
+
+    if (m_Visible && now >= m_LastStayLogTime + 2000) {
+        // Why the toolbar is still on screen, for diagnosing auto-hide.
+        m_LastStayLogTime = now;
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "PLANK toolbar visible: pointer=(%d,%d) inside=%d pinned=%d "
+                    "localButtons=%d draggingSlider=%d deadlineIn=%lld edgeHover=%d",
+                    m_PointerX, m_PointerY, m_PointerInside ? 1 : 0,
+                    m_Pinned ? 1 : 0, m_ButtonRouter.hasLocalButtons() ? 1 : 0,
+                    m_DraggingSlider ? 1 : 0,
+                    m_HideDeadline == 0 ? -1LL :
+                        static_cast<long long>(m_HideDeadline) - static_cast<long long>(now),
+                    m_EdgeHoverStartTime != 0 ? 1 : 0);
     }
 
     if (m_Visible && !m_ButtonRouter.hasLocalButtons() &&
@@ -693,6 +708,7 @@ void PlankToolbar::show(Uint64 now)
 
 void PlankToolbar::hide()
 {
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "PLANK toolbar auto-hidden");
     endLocalPointerInteraction();
     m_Visible = false;
     m_EdgeHoverStartTime = 0;
