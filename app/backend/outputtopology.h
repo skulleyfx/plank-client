@@ -61,6 +61,9 @@ struct NvOutputTopology
     static const int MacEncodingProfileFeature = 0x200000;
     // Plain-text clipboard sharing, both directions. Windows hosts only today.
     static const int ClipboardTextFeature = 0x400000;
+    // Windows hosts join two outputs into one canvas only for clients that
+    // ask, so this bit is sent per launch, not in SupportedFeatureFlags.
+    static const int TwoScreenCaptureFeature = 0x800000;
     static const int FixedCaptureFlags = FixedCaptureFeature | OutputTopologyFeature |
             TopologyGenerationFeature | HostLayoutMetadataFeature | CompositeSourceRegionsFeature |
             MacDesktopPreparationFeature | MacEncodingProfileFeature;

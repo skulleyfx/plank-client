@@ -75,6 +75,10 @@ typedef struct _DECODER_PARAMETERS {
     bool enableIdentityGbr;
     bool testOnly;
     const PlankPresentationLayout* presentationLayout;
+    // True when this session will present on two client monitors. The
+    // layout above is only filled in once both windows exist, which is
+    // after the renderer is chosen.
+    bool multiOutputPresentation;
 } DECODER_PARAMETERS, *PDECODER_PARAMETERS;
 
 #define WINDOW_STATE_CHANGE_SIZE 0x01

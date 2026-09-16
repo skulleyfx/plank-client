@@ -135,6 +135,9 @@ public:
     QVector<NvApp> appList;
     QString plankScalingMode;
     QString plankHostLayout;
+    // Per workstation, per client machine: use two of this computer's
+    // monitors for this workstation. Off until the artist turns it on.
+    bool plankTwoScreens = false;
     QString plankVirtualMode1;
     QString plankVirtualMode2;
     int plankVideoProfile = 0;

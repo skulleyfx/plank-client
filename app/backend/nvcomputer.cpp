@@ -23,6 +23,7 @@
 #define SER_CUSTOMNAME "customname"
 #define SER_PLANK_SCALING_MODE "plank-scaling-mode"
 #define SER_HOSTLAYOUT "plank-host-layout"
+#define SER_PLANK_TWO_SCREENS "plankTwoScreens"
 #define SER_VIRTUALMODE1 "plank-virtual-mode-1"
 #define SER_VIRTUALMODE2 "plank-virtual-mode-2"
 #define SER_VIDEOPROFILE "plank-video-profile"
@@ -145,6 +146,7 @@ NvComputer::NvComputer(QSettings& settings)
             this->plankHostLayout != QStringLiteral("fixed")) {
         this->plankHostLayout = NvOutputTopology::MatchClientHostLayout;
     }
+    this->plankTwoScreens = settings.value(SER_PLANK_TWO_SCREENS, false).toBool();
     this->plankVirtualMode1 =
             settings.value(SER_VIRTUALMODE1, QStringLiteral("3840x2160")).toString();
     this->plankVirtualMode2 =
@@ -239,6 +241,7 @@ void NvComputer::serialize(QSettings& settings, bool serializeApps) const
     settings.remove("srvcert");
     settings.setValue(SER_PLANK_SCALING_MODE, plankScalingMode);
     settings.setValue(SER_HOSTLAYOUT, plankHostLayout);
+    settings.setValue(SER_PLANK_TWO_SCREENS, plankTwoScreens);
     settings.setValue(SER_VIRTUALMODE1, plankVirtualMode1);
     settings.setValue(SER_VIRTUALMODE2, plankVirtualMode2);
     settings.setValue(SER_VIDEOPROFILE, plankVideoProfile);

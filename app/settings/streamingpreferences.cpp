@@ -15,6 +15,7 @@
 #define SER_AUDIOCFG "audiocfg"
 #define SER_PLANK_TOOLBAR_PINNED "planktoolbarpinned"
 #define SER_PLANK_CLIPBOARD_TEXT "plankclipboardtext"
+#define SER_PLANK_TWO_SCREENS "planktwoscreens"
 #define SER_WINDOWMODE "windowmode"
 #define SER_MDNS "mdns"
 #define SER_CONNWARNINGS "connwarnings"
@@ -83,6 +84,8 @@ void StreamingPreferences::reload()
     identityGbrBitDepth = 10;
     plankToolbarPinned = settings.value(SER_PLANK_TOOLBAR_PINNED, false).toBool();
     plankClipboardText = settings.value(SER_PLANK_CLIPBOARD_TEXT, true).toBool();
+    // Off by default: a first connection always uses one screen.
+    plankTwoScreens = settings.value(SER_PLANK_TWO_SCREENS, false).toBool();
     enableVsync = settings.value(SER_VSYNC, true).toBool();
     playAudioOnHost = settings.value(SER_HOSTAUDIO, false).toBool();
     enableMdns = settings.value(SER_MDNS, false).toBool();
@@ -263,6 +266,7 @@ void StreamingPreferences::save()
     settings.setValue(SER_AUDIOCFG, static_cast<int>(audioConfig));
     settings.setValue(SER_PLANK_TOOLBAR_PINNED, plankToolbarPinned);
     settings.setValue(SER_PLANK_CLIPBOARD_TEXT, plankClipboardText);
+    settings.setValue(SER_PLANK_TWO_SCREENS, plankTwoScreens);
     settings.setValue(SER_WINDOWMODE, static_cast<int>(windowMode));
     settings.setValue(SER_LANGUAGE, static_cast<int>(language));
     settings.setValue(SER_MUTEONFOCUSLOSS, muteOnFocusLoss);

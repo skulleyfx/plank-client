@@ -404,6 +404,8 @@ bool Session::chooseDecoder(DecoderSelectionMode selectionMode,
     params.encoderBackend = encoderBackend;
     params.presentationLayout = !testOnly && s_ActiveSession != nullptr ?
                 &s_ActiveSession->m_PresentationLayout : nullptr;
+    params.multiOutputPresentation = !testOnly && s_ActiveSession != nullptr &&
+            s_ActiveSession->m_UseMultiDisplayPresentation;
 
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "V-sync %s",
@@ -2013,19 +2015,73 @@ bool Session::snapshotClientDisplays()
                 std::make_tuple(right.logicalBounds.x,
                                 right.logicalBounds.y);
     });
+    // Two-screen presentation needs a renderer that draws one frame into two
+    // windows. That is the Vulkan renderer everywhere, and the GL renderer on
+    // Linux; the Direct3D renderers present to a single window only.
     m_UseMultiDisplayPresentation = m_IsFullScreen &&
-            strcmp(SDL_GetCurrentVideoDriver(), "wayland") == 0 &&
-            m_ClientDisplays.size() == 2;
+            m_ClientDisplays.size() >= 2 &&
+            m_Computer->plankTwoScreens;
+    if (m_UseMultiDisplayPresentation &&
+            (m_PlankVideoProfile == StreamingPreferences::PLANK_PROFILE_NVENC_H264_8BIT_444 ||
+             m_PlankVideoProfile == StreamingPreferences::PLANK_PROFILE_H264_8BIT_444 ||
+             m_PlankVideoProfile == StreamingPreferences::PLANK_PROFILE_H264_8BIT_422 ||
+             m_PlankVideoProfile == StreamingPreferences::PLANK_PROFILE_H264_10BIT_444 ||
+             m_PlankVideoProfile == StreamingPreferences::PLANK_PROFILE_H264_10BIT_422)) {
+        // Two screens side by side exceed H.264's 4096-pixel width limit.
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Two-screen session: switching from an H.264 profile to HEVC for the wider picture");
+        m_PlankVideoProfile = StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_8BIT_444;
+    }
+
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "Two-screen session: setting=%s fullscreen=%s monitors=%d -> %s",
+                m_Preferences->plankTwoScreens ? "on" : "off",
+                m_IsFullScreen ? "yes" : "no",
+                (int) m_ClientDisplays.size(),
+                m_UseMultiDisplayPresentation ? "using two screens" : "using one screen");
+
     if (m_UseMultiDisplayPresentation) {
-        const auto& left = m_ClientDisplays.at(0).logicalBounds;
-        const auto& right = m_ClientDisplays.at(1).logicalBounds;
-        const bool horizontal = left.x + left.w <= right.x;
-        const bool overlapsVertically = left.y < right.y + right.h &&
-                right.y < left.y + left.h;
-        if (!horizontal || !overlapsVertically) {
+        // The stream uses the monitor PLANK was started on plus the monitor
+        // beside it. More than two monitors is common, so pick the pair
+        // rather than refusing.
+        const auto sideBySide = [](const SDL_Rect& left, const SDL_Rect& right) {
+            return left.x + left.w <= right.x &&
+                    left.y < right.y + right.h && right.y < left.y + left.h;
+        };
+        int targetIndex = 0;
+        for (int i = 0; i < m_ClientDisplays.size(); i++) {
+            if (m_ClientDisplays.at(i).displayId == m_TargetDisplayId) {
+                targetIndex = i;
+                break;
+            }
+        }
+        int pairIndex = -1;
+        if (targetIndex + 1 < m_ClientDisplays.size() &&
+                sideBySide(m_ClientDisplays.at(targetIndex).logicalBounds,
+                           m_ClientDisplays.at(targetIndex + 1).logicalBounds)) {
+            pairIndex = targetIndex + 1;
+        }
+        else if (targetIndex > 0 &&
+                 sideBySide(m_ClientDisplays.at(targetIndex - 1).logicalBounds,
+                            m_ClientDisplays.at(targetIndex).logicalBounds)) {
+            pairIndex = targetIndex - 1;
+        }
+
+        if (pairIndex < 0) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                        "Two-output presentation requires client monitors arranged left to right; using the target output only");
+                        "No monitor sits beside the one PLANK started on; using that monitor only");
             m_UseMultiDisplayPresentation = false;
+        }
+        else {
+            const int firstIndex = qMin(targetIndex, pairIndex);
+            const int secondIndex = qMax(targetIndex, pairIndex);
+            const QVector<ClientDisplaySnapshot> pair {
+                m_ClientDisplays.at(firstIndex), m_ClientDisplays.at(secondIndex)};
+            m_ClientDisplays = pair;
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Two-screen session uses client outputs %u and %u",
+                        m_ClientDisplays.at(0).displayId,
+                        m_ClientDisplays.at(1).displayId);
         }
     }
 
@@ -2125,6 +2181,54 @@ void Session::rebuildPresentationLayout()
                 m_PresentationFullscreen ? "yes" : "no");
 }
 
+void Session::paintStartupSplash(SDL_Window* window)
+{
+#ifdef Q_OS_WIN32
+    // Windows paints a new window white until something draws into it, which
+    // looks like a fault while the stream starts. Fill it with the PLANK
+    // background and logo instead.
+    if (window == nullptr) {
+        return;
+    }
+    HWND hwnd = (HWND) SDL_GetPointerProperty(SDL_GetWindowProperties(window),
+                                              SDL_PROP_WINDOW_WIN32_HWND_POINTER,
+                                              nullptr);
+    if (hwnd == nullptr) {
+        return;
+    }
+
+    HDC deviceContext = GetDC(hwnd);
+    if (deviceContext == nullptr) {
+        return;
+    }
+
+    RECT clientRect;
+    GetClientRect(hwnd, &clientRect);
+
+    HBRUSH background = CreateSolidBrush(RGB(14, 14, 16));
+    if (background != nullptr) {
+        FillRect(deviceContext, &clientRect, background);
+        DeleteObject(background);
+    }
+
+    // The application icon doubles as the logo.
+    const int logoSize = 256;
+    HICON icon = (HICON) LoadImage(GetModuleHandle(nullptr), MAKEINTRESOURCE(1),
+                                   IMAGE_ICON, logoSize, logoSize, LR_DEFAULTCOLOR);
+    if (icon != nullptr) {
+        DrawIconEx(deviceContext,
+                   (clientRect.right - clientRect.left - logoSize) / 2,
+                   (clientRect.bottom - clientRect.top - logoSize) / 2,
+                   icon, logoSize, logoSize, 0, nullptr, DI_NORMAL);
+        DestroyIcon(icon);
+    }
+
+    ReleaseDC(hwnd, deviceContext);
+#else
+    Q_UNUSED(window)
+#endif
+}
+
 bool Session::placeFullscreenWindowOnDisplay(SDL_Window* window,
                                              SDL_DisplayID displayId)
 {
@@ -2153,6 +2257,16 @@ bool Session::placeFullscreenWindowOnDisplay(SDL_Window* window,
                     "Fullscreen surface assigned to requested client output %u",
                     displayId);
         return true;
+    }
+
+    if (strcmp(SDL_GetCurrentVideoDriver(), "wayland") != 0) {
+        // Elsewhere the position request above is authoritative; the retry
+        // below is a Wayland compositor workaround that would flash the
+        // window and steal focus.
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Fullscreen surface landed on output %u instead of %u",
+                    actualDisplay, displayId);
+        return false;
     }
 
     // Some Wayland compositors retain the first fullscreen assignment until
@@ -2626,6 +2740,16 @@ void Session::updateOptimalWindowDisplayMode()
                     bestMode.w, bestMode.h, qRound(bestMode.refresh_rate));
     }
 
+    if (m_UseMultiDisplayPresentation) {
+        // Exclusive fullscreen on one screen while a second fullscreen window
+        // sits on the other makes Windows minimize one of them. Both windows
+        // use desktop fullscreen instead.
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Two-screen session: using desktop fullscreen on both outputs");
+        SDL_SetWindowFullscreenMode(m_Window, nullptr);
+        return;
+    }
+
     SDL_SetWindowFullscreenMode(m_Window, &bestMode);
 }
 
@@ -2819,8 +2943,11 @@ bool Session::startConnectionAsync(bool reconnecting,
                           NvOutputTopology::ScaledSpanMode,
                           m_Computer->outputTopology.generation,
                           m_Computer->plankTopologyVersion,
-                          m_Computer->plankFeatureFlags &
-                              NvOutputTopology::SupportedFeatureFlags,
+                          (m_Computer->plankFeatureFlags &
+                           NvOutputTopology::SupportedFeatureFlags) |
+                              (m_UseMultiDisplayPresentation ?
+                                   (m_Computer->plankFeatureFlags &
+                                    NvOutputTopology::TwoScreenCaptureFeature) : 0),
                           takeOverActiveSession,
                           m_ResolvedHostLayout,
                           m_ResolvedVirtualModes.value(0),
@@ -3801,6 +3928,7 @@ void Session::execInternal()
     }
 
     SDL_SetWindowPosition(m_Window, x, y);
+    paintStartupSplash(m_Window);
 
     if (m_UseMultiDisplayPresentation) {
         for (const auto& display : std::as_const(m_ClientDisplays)) {
@@ -3855,6 +3983,7 @@ void Session::execInternal()
             }
             SDL_SetWindowFullscreenMode(secondary, nullptr);
             SDL_SetWindowFullscreen(secondary, true);
+            paintStartupSplash(secondary);
             if (!placeFullscreenWindowOnDisplay(secondary,
                                                 display.displayId)) {
                 SDL_DestroyWindow(secondary);
@@ -4043,6 +4172,14 @@ void Session::execInternal()
     bool earlyWaitingVisible = false;
     PlankReconnectState reconnectState;
     Uint64 reconnectDecisionDeadline = 0;
+    // Two-screen sessions need a decoder that can handle the wider picture.
+    // If none appears, stop holding the mouse captive.
+    constexpr Uint64 TwoScreenPictureTimeoutMs = 8000;
+    bool twoScreenPictureSeen = !m_UseMultiDisplayPresentation;
+    const Uint64 twoScreenStart = SDL_GetTicks();
+    Uint64 twoScreenDeadline = m_UseMultiDisplayPresentation ?
+                twoScreenStart + TwoScreenPictureTimeoutMs : 0;
+
     const auto handlePlankLocalUserEvent = [this](const SDL_UserEvent& userEvent) {
         switch (userEvent.code) {
         case SDL_CODE_PLANK_BITRATE_APPLIED:
@@ -4134,6 +4271,25 @@ void Session::execInternal()
         }
         pollLocalClipboard(SDL_GetTicks());
 
+        if (m_UseMultiDisplayPresentation && !twoScreenPictureSeen) {
+            if (m_CurrentRenderedFps.load(std::memory_order_relaxed) > 0.0f) {
+                twoScreenPictureSeen = true;
+            }
+            else if (twoScreenDeadline != 0 && SDL_GetTicks() >= twoScreenDeadline) {
+                twoScreenDeadline = 0;
+                // Most likely this computer cannot decode the wider picture.
+                // Free the mouse and keyboard so the machine stays usable.
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                             "No picture after %d seconds in a two-screen session; releasing input. "
+                             "Turn off \"Use two screens\" in Settings to stream one screen.",
+                             (int) (TwoScreenPictureTimeoutMs / 1000));
+                m_InputHandler->setCaptureActive(false);
+                setPlankReconnectStatus(
+                            "This computer could not show a two-screen session. "
+                            "Disconnect and turn off \"Use two screens\" in Settings.", true);
+            }
+        }
+
         if (m_PlankToolbar) {
             m_PlankToolbar->setRenderedStats(
                         m_CurrentRenderedFps.load(std::memory_order_relaxed),
@@ -4143,6 +4299,11 @@ void Session::execInternal()
                 const auto rttMs = m_CurrentNetworkRttMs.load(std::memory_order_relaxed);
                 m_PlankToolbar->setNetworkLatencyMs(rttMs == 0 ? -1 : static_cast<int>(rttMs));
             }
+            m_PlankToolbar->setTwoScreenState(
+                        m_ClientDisplays.size() >= 2 &&
+                        (m_Computer->plankFeatureFlags &
+                         NvOutputTopology::TwoScreenCaptureFeature) != 0,
+                        m_UseMultiDisplayPresentation);
             const auto action = m_PlankToolbar->update(
                         SDL_GetTicks(), !m_Reconnecting.load());
             if (action == PlankToolbar::Action::Disconnect) {
@@ -4156,6 +4317,22 @@ void Session::execInternal()
                 m_PlankToolbar->hideReconnectPrompt();
                 reconnectDecisionDeadline = SDL_GetTicks() +
                         static_cast<Uint64>(m_Preferences->plankUnreachableTimeoutSeconds) * 1000;
+            }
+            if (action == PlankToolbar::Action::ToggleTwoScreens) {
+                const bool wantTwo = !m_UseMultiDisplayPresentation;
+                {
+                    QWriteLocker lock(&m_Computer->lock);
+                    m_Computer->plankTwoScreens = wantTwo;
+                }
+                m_ComputerManager->clientSideAttributeUpdated(m_Computer);
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "Two-screen preference for %s set to %s",
+                            qPrintable(m_Computer->name), wantTwo ? "on" : "off");
+                setPlankReconnectStatus(
+                            wantTwo ?
+                                "Two screens set for this workstation. Disconnect and connect again to use them." :
+                                "One screen set for this workstation. Disconnect and connect again to use it.",
+                            false);
             }
             if (action == PlankToolbar::Action::ToggleFullscreen) {
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,

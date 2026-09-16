@@ -744,6 +744,26 @@ Flickable {
                 }
 
                 PlankSettingLabel {
+                    text: qsTr("Use two screens")
+                }
+
+                PlankCheckBox {
+                    id: twoScreensCheck
+                    Layout.alignment: Qt.AlignLeft | Qt.AlignVCenter
+                    text: ""
+                    Accessible.name: qsTr("Stream two workstation screens onto two monitors")
+                    checked: StreamingPreferences.plankTwoScreens
+                    onCheckedChanged: {
+                        StreamingPreferences.plankTwoScreens = checked
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 5000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Streams both workstation screens onto your two monitors. Needs two monitors here and two screens on the workstation; otherwise one screen is used.")
+                }
+
+                PlankSettingLabel {
                     text: qsTr("Keep the stream toolbar on screen")
                 }
 

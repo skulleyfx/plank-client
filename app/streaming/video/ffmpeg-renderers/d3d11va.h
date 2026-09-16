@@ -17,6 +17,9 @@ extern "C" {
 #include <array>
 #include <vector>
 
+#include <QRect>
+#include <QSize>
+
 class D3D11VARenderer : public IFFmpegRenderer
 {
 public:
@@ -51,7 +54,7 @@ private:
     bool setupTexturePoolViews(AVD3D11VAFramesContext* frameContext); // for m_BindDecoderOutputTextures
     void renderOverlay(Overlay::OverlayType type);
     void bindColorConversion(AVFrame* frame);
-    void renderVideo(AVFrame* frame);
+    void renderVideo(AVFrame* frame, ID3D11Buffer* vertexBuffer = nullptr);
     bool checkDecoderSupport(IDXGIAdapter* adapter);
     bool createDeviceByAdapterIndex(int adapterIndex, bool* adapterNotFound = nullptr);
 
@@ -87,7 +90,23 @@ private:
     bool m_AllowTearing;
 
     std::array<Microsoft::WRL::ComPtr<ID3D11PixelShader>, PixelShaders::_COUNT> m_VideoPixelShaders;
-    Microsoft::WRL::ComPtr<ID3D11Buffer> m_VideoVertexBuffer;
+
+    // One window per client monitor. A single-screen session has one target;
+    // a two-screen session has one per monitor, each showing its slice of the
+    // picture from the same decoded frame.
+    struct PresentationTarget {
+        SDL_Window* window = nullptr;
+        HWND hwnd = nullptr;
+        Microsoft::WRL::ComPtr<IDXGISwapChain4> swapChain;
+        Microsoft::WRL::ComPtr<ID3D11RenderTargetView> renderTargetView;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> vertexBuffer;
+        QRect canvasRect;
+        int width = 0;
+        int height = 0;
+        bool primary = true;
+    };
+    std::vector<PresentationTarget> m_Targets;
+    QSize m_PresentationCanvasSize;
 
     // Only valid if !m_BindDecoderOutputTextures
     Microsoft::WRL::ComPtr<ID3D11Texture2D> m_VideoTexture;

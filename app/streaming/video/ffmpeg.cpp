@@ -1223,7 +1223,7 @@ uint16_t FFmpegVideoDecoder::getDecodeLatencyPercentile(unsigned int percentile)
     return 0;
 }
 
-IFFmpegRenderer* FFmpegVideoDecoder::createHwAccelRenderer(const AVCodecHWConfig* hwDecodeCfg, int pass)
+IFFmpegRenderer* FFmpegVideoDecoder::createHwAccelRenderer(const AVCodecHWConfig* hwDecodeCfg, int pass, bool multiOutput)
 {
     if (!(hwDecodeCfg->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX)) {
         return nullptr;
@@ -1236,6 +1236,8 @@ IFFmpegRenderer* FFmpegVideoDecoder::createHwAccelRenderer(const AVCodecHWConfig
         // DXVA2 appears in the hwaccel list before D3D11VA, so we only check for D3D11VA
         // on the first pass to ensure we prefer D3D11VA over DXVA2.
         case AV_HWDEVICE_TYPE_D3D11VA:
+            // D3D11VA presents to every client monitor, so it is used for
+            // one-screen and two-screen sessions alike.
             return new D3D11VARenderer(pass);
 #endif
 #ifdef Q_OS_DARWIN
@@ -1285,6 +1287,9 @@ IFFmpegRenderer* FFmpegVideoDecoder::createHwAccelRenderer(const AVCodecHWConfig
         // Since DXVA2 is in the hwaccel list first, we'll first try to fall back
         // to that before giving D3D11VA another try as a last resort.
         case AV_HWDEVICE_TYPE_DXVA2:
+            if (multiOutput) {
+                return nullptr;  // presents to a single window only
+            }
             return new DXVA2Renderer(pass);
         case AV_HWDEVICE_TYPE_D3D11VA:
             return new D3D11VARenderer(pass);
@@ -1489,8 +1494,9 @@ bool FFmpegVideoDecoder::tryInitializeRendererForUnknownDecoder(const AVCodec* d
 
                 // Initialize the hardware codec and submit a test frame if the renderer needs it
                 IFFmpegRenderer::InitFailureReason failureReason;
+                const bool multiOutput = params->multiOutputPresentation;
                 if (tryInitializeRenderer(decoder, AV_PIX_FMT_NONE, params, config, &failureReason,
-                                          [config, pass]() -> IFFmpegRenderer* { return createHwAccelRenderer(config, pass); })) {
+                                          [config, pass, multiOutput]() -> IFFmpegRenderer* { return createHwAccelRenderer(config, pass, multiOutput); })) {
                     return true;
                 }
                 else if (failureReason == IFFmpegRenderer::InitFailureReason::NoHardwareSupport) {
@@ -1684,7 +1690,9 @@ bool FFmpegVideoDecoder::tryInitializeHwAccelDecoder(PDECODER_PARAMETERS params,
             // Initialize the hardware codec and submit a test frame if the renderer needs it
             IFFmpegRenderer::InitFailureReason failureReason;
             if (tryInitializeRenderer(decoder, AV_PIX_FMT_NONE, params, config, &failureReason,
-                                      [config, pass]() -> IFFmpegRenderer* { return createHwAccelRenderer(config, pass); })) {
+                                      [config, pass, params]() -> IFFmpegRenderer* {
+                                          return createHwAccelRenderer(config, pass,
+                                                                       params->multiOutputPresentation); })) {
                 return true;
             }
             else if (failureReason == IFFmpegRenderer::InitFailureReason::NoHardwareSupport) {

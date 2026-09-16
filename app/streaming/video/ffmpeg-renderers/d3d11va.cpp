@@ -2,6 +2,7 @@
 #include <initguid.h>
 
 #include "d3d11va.h"
+#include "streaming/plankpresentation.h"
 #include "dxutil.h"
 #include "path.h"
 
@@ -109,7 +110,7 @@ D3D11VARenderer::~D3D11VARenderer()
 
     SDL_DestroyMutex(m_ContextLock);
 
-    m_VideoVertexBuffer.Reset();
+    m_Targets.clear();
     for (auto& shader : m_VideoPixelShaders) {
         shader.Reset();
     }
@@ -455,49 +456,86 @@ bool D3D11VARenderer::initialize(PDECODER_PARAMETERS params)
         }
     }
 
-    HWND hwnd = plankGetHwnd(params->window);
-    SDL_assert(hwnd != nullptr);
-    if (hwnd == nullptr) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "Unable to get HWND from SDL window: %s",
-                     SDL_GetError());
-        return false;
+    // Build the list of windows to present into. A two-screen session has one
+    // per monitor; everything else has a single window.
+    m_Targets.clear();
+    if (params->presentationLayout != nullptr && params->presentationLayout->isMultiOutput()) {
+        m_PresentationCanvasSize = params->presentationLayout->canvasSize;
+        for (const auto& output : params->presentationLayout->outputs) {
+            PresentationTarget target;
+            target.window = output.window;
+            target.canvasRect = output.canvasRect;
+            target.primary = output.primary;
+            m_Targets.push_back(target);
+        }
     }
+    else {
+        PresentationTarget target;
+        target.window = params->window;
+        target.canvasRect = QRect(0, 0, swapChainDesc.Width, swapChainDesc.Height);
+        target.primary = true;
+        m_PresentationCanvasSize = QSize(swapChainDesc.Width, swapChainDesc.Height);
+        m_Targets.push_back(target);
+    }
+
+    for (auto& target : m_Targets) {
+        target.hwnd = plankGetHwnd(target.window);
+        if (target.hwnd == nullptr) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "Unable to get HWND from SDL window: %s",
+                         SDL_GetError());
+            return false;
+        }
+        SDL_GetWindowSizeInPixels(target.window, &target.width, &target.height);
+    }
+
 
     // Always use windowed or borderless windowed mode.. SDL does mode-setting for us in
     // full-screen exclusive mode (SDL_WINDOW_FULLSCREEN), so this actually works out okay.
-    ComPtr<IDXGISwapChain1> swapChain;
-    hr = m_Factory->CreateSwapChainForHwnd(m_Device.Get(),
-                                           hwnd,
-                                           &swapChainDesc,
-                                           nullptr,
-                                           nullptr,
-                                           &swapChain);
+    for (auto& target : m_Targets) {
+        DXGI_SWAP_CHAIN_DESC1 targetDesc = swapChainDesc;
+        targetDesc.Width = target.width;
+        targetDesc.Height = target.height;
 
-    if (FAILED(hr)) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "IDXGIFactory::CreateSwapChainForHwnd() failed: %x",
-                     hr);
-        return false;
+        ComPtr<IDXGISwapChain1> swapChain;
+        hr = m_Factory->CreateSwapChainForHwnd(m_Device.Get(),
+                                               target.hwnd,
+                                               &targetDesc,
+                                               nullptr,
+                                               nullptr,
+                                               &swapChain);
+        if (FAILED(hr)) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "IDXGIFactory::CreateSwapChainForHwnd() failed: %x",
+                         hr);
+            return false;
+        }
+
+        hr = swapChain.As(&target.swapChain);
+        if (FAILED(hr)) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "IDXGISwapChain::QueryInterface(IDXGISwapChain4) failed: %x",
+                         hr);
+            return false;
+        }
+
+        hr = m_Factory->MakeWindowAssociation(target.hwnd, DXGI_MWA_NO_WINDOW_CHANGES);
+        if (FAILED(hr)) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "IDXGIFactory::MakeWindowAssociation() failed: %x",
+                         hr);
+            return false;
+        }
     }
 
-    hr = swapChain.As(&m_SwapChain);
-    if (FAILED(hr)) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "IDXGISwapChain::QueryInterface(IDXGISwapChain4) failed: %x",
-                     hr);
-        return false;
-    }
-
-    // Disable Alt+Enter, PrintScreen, and window message snooping. This makes
-    // it safe to run the renderer on a separate rendering thread rather than
-    // requiring the main (message loop) thread.
-    hr = m_Factory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_WINDOW_CHANGES);
-    if (FAILED(hr)) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "IDXGIFactory::MakeWindowAssociation() failed: %x",
-                     hr);
-        return false;
+    m_SwapChain = m_Targets.front().swapChain;
+    m_DisplayWidth = m_Targets.front().width;
+    m_DisplayHeight = m_Targets.front().height;
+    if (m_Targets.size() > 1) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Direct3D presentation on %d windows across a %dx%d canvas",
+                    (int) m_Targets.size(),
+                    m_PresentationCanvasSize.width(), m_PresentationCanvasSize.height());
     }
 
     // Surfaces must be 16 pixel aligned for H.264 and 128 pixel aligned for everything else
@@ -624,20 +662,39 @@ void D3D11VARenderer::renderFrame(AVFrame* frame)
     // access from inside FFmpeg's decoding code
     lockContext(this);
 
-    // Clear the back buffer
     const float clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    m_DeviceContext->ClearRenderTargetView(m_RenderTargetView.Get(), clearColor);
 
-    // Bind the back buffer. This needs to be done each time,
-    // because the render target view will be unbound by Present().
-    m_DeviceContext->OMSetRenderTargets(1, m_RenderTargetView.GetAddressOf(), nullptr);
+    // Draw the frame into every window. Each one holds its own slice of the
+    // picture, so the same decoded frame serves both monitors.
+    for (const auto& target : m_Targets) {
+        if (!target.renderTargetView || !target.vertexBuffer) {
+            continue;
+        }
 
-    // Render our video frame with the aspect-ratio adjusted viewport
-    renderVideo(frame);
+        m_DeviceContext->ClearRenderTargetView(target.renderTargetView.Get(), clearColor);
 
-    // Render overlays on top of the video stream
-    for (int i = 0; i < Overlay::OverlayMax; i++) {
-        renderOverlay((Overlay::OverlayType)i);
+        // Bind the back buffer. This needs to be done each time,
+        // because the render target view will be unbound by Present().
+        ID3D11RenderTargetView* renderTargetView = target.renderTargetView.Get();
+        m_DeviceContext->OMSetRenderTargets(1, &renderTargetView, nullptr);
+
+        D3D11_VIEWPORT viewport = {};
+        viewport.Width = (float) target.width;
+        viewport.Height = (float) target.height;
+        viewport.MinDepth = 0.0f;
+        viewport.MaxDepth = 1.0f;
+        m_DeviceContext->RSSetViewports(1, &viewport);
+
+        // Render our video frame with the aspect-ratio adjusted viewport
+        renderVideo(frame, target.vertexBuffer.Get());
+
+        // Overlays belong on the main window only, so the toolbar and
+        // messages do not appear twice.
+        if (target.primary) {
+            for (int i = 0; i < Overlay::OverlayMax; i++) {
+                renderOverlay((Overlay::OverlayType)i);
+            }
+        }
     }
 
     UINT flags;
@@ -681,8 +738,17 @@ void D3D11VARenderer::renderFrame(AVFrame* frame)
         m_LastColorTrc = frame->color_trc;
     }
 
-    // Present according to the decoder parameters
-    hr = m_SwapChain->Present(0, flags);
+    // Present every window
+    hr = S_OK;
+    for (const auto& target : m_Targets) {
+        if (!target.swapChain) {
+            continue;
+        }
+        const HRESULT presentResult = target.swapChain->Present(0, flags);
+        if (FAILED(presentResult)) {
+            hr = presentResult;
+        }
+    }
 
     // Release the context lock
     unlockContext(this);
@@ -842,12 +908,13 @@ void D3D11VARenderer::bindColorConversion(AVFrame* frame)
     m_LastFullRange = fullRange;
 }
 
-void D3D11VARenderer::renderVideo(AVFrame* frame)
+void D3D11VARenderer::renderVideo(AVFrame* frame, ID3D11Buffer* vertexBuffer)
 {
     // Bind video rendering vertex buffer
     UINT stride = sizeof(VERTEX);
     UINT offset = 0;
-    m_DeviceContext->IASetVertexBuffers(0, 1, m_VideoVertexBuffer.GetAddressOf(), &stride, &offset);
+    ID3D11Buffer* buffers[] = { vertexBuffer };
+    m_DeviceContext->IASetVertexBuffers(0, 1, buffers, &stride, &offset);
 
     UINT srvIndex;
     if (m_BindDecoderOutputTextures) {
@@ -1368,10 +1435,10 @@ bool D3D11VARenderer::setupRenderingResources()
         }
     }
 
-    // Create our render target view
-    {
+    // Create a render target view for each window
+    for (auto& target : m_Targets) {
         ComPtr<ID3D11Resource> backBufferResource;
-        hr = m_SwapChain->GetBuffer(0, __uuidof(ID3D11Resource), (void**)&backBufferResource);
+        hr = target.swapChain->GetBuffer(0, __uuidof(ID3D11Resource), (void**)&backBufferResource);
         if (FAILED(hr)) {
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                          "IDXGISwapChain::GetBuffer() failed: %x",
@@ -1379,7 +1446,7 @@ bool D3D11VARenderer::setupRenderingResources()
             return false;
         }
 
-        hr = m_Device->CreateRenderTargetView(backBufferResource.Get(), nullptr, &m_RenderTargetView);
+        hr = m_Device->CreateRenderTargetView(backBufferResource.Get(), nullptr, &target.renderTargetView);
         if (FAILED(hr)) {
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                          "ID3D11Device::CreateRenderTargetView() failed: %x",
@@ -1387,6 +1454,7 @@ bool D3D11VARenderer::setupRenderingResources()
             return false;
         }
     }
+    m_RenderTargetView = m_Targets.front().renderTargetView;
 
     // We use a common index buffer for all geometry
     {
@@ -1416,33 +1484,70 @@ bool D3D11VARenderer::setupRenderingResources()
         }
     }
 
-    // Create our fixed vertex buffer for video rendering
-    {
-        // Scale video to the window size while preserving aspect ratio
-        SDL_Rect src, dst;
-        src.x = src.y = 0;
-        src.w = m_DecoderParams.width;
-        src.h = m_DecoderParams.height;
-        dst.x = dst.y = 0;
-        dst.w = m_DisplayWidth;
-        dst.h = m_DisplayHeight;
-        StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
+    // Create a vertex buffer per window. With one window this is the whole
+    // picture; with two, each window draws the part of the picture that falls
+    // on its monitor.
+    SDL_assert(m_TextureAlignment != 0);
+    const float alignedWidth = (float) FFALIGN(m_DecoderParams.width, m_TextureAlignment);
+    const float alignedHeight = (float) FFALIGN(m_DecoderParams.height, m_TextureAlignment);
 
-        // Convert screen space to normalized device coordinates
+    for (auto& target : m_Targets) {
+        // Where this window's slice sits in the picture, and where it lands
+        // in the window.
+        QRect sourceRect(0, 0, m_DecoderParams.width, m_DecoderParams.height);
+        QRect destinationRect(0, 0, target.width, target.height);
+        if (m_Targets.size() > 1) {
+            const PlankPresentationSlice slice =
+                    PlankPresentation::sliceForOutput(
+                        QSize(m_DecoderParams.width, m_DecoderParams.height),
+                        m_PresentationCanvasSize, target.canvasRect);
+            if (!slice.visible) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "No picture falls on one of the client monitors");
+                continue;
+            }
+            sourceRect = slice.sourceRect.toRect();
+            // The slice is in output-local pixels already.
+            destinationRect = slice.destinationRect;
+        }
+        else {
+            // Scale video to the window size while preserving aspect ratio
+            SDL_Rect src, dst;
+            src.x = src.y = 0;
+            src.w = m_DecoderParams.width;
+            src.h = m_DecoderParams.height;
+            dst.x = dst.y = 0;
+            dst.w = target.width;
+            dst.h = target.height;
+            StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
+            destinationRect = QRect(dst.x, dst.y, dst.w, dst.h);
+        }
+
+        SDL_Rect dstRect {destinationRect.x(), destinationRect.y(),
+                          destinationRect.width(), destinationRect.height()};
         SDL_FRect renderRect;
-        StreamUtils::screenSpaceToNormalizedDeviceCoords(&dst, &renderRect, m_DisplayWidth, m_DisplayHeight);
+        StreamUtils::screenSpaceToNormalizedDeviceCoords(&dstRect, &renderRect,
+                                                         target.width, target.height);
 
-        // If we're binding the decoder output textures directly, don't sample from the alignment padding area
-        SDL_assert(m_TextureAlignment != 0);
-        float uMax = m_BindDecoderOutputTextures ? ((float)m_DecoderParams.width / FFALIGN(m_DecoderParams.width, m_TextureAlignment)) : 1.0f;
-        float vMax = m_BindDecoderOutputTextures ? ((float)m_DecoderParams.height / FFALIGN(m_DecoderParams.height, m_TextureAlignment)) : 1.0f;
+        // Sample only this window's part of the frame, skipping any
+        // alignment padding the decoder added.
+        const float uMin = m_BindDecoderOutputTextures ? sourceRect.x() / alignedWidth :
+                                                         (float) sourceRect.x() / m_DecoderParams.width;
+        const float uMax = m_BindDecoderOutputTextures ?
+                    (sourceRect.x() + sourceRect.width()) / alignedWidth :
+                    (float) (sourceRect.x() + sourceRect.width()) / m_DecoderParams.width;
+        const float vTop = m_BindDecoderOutputTextures ? sourceRect.y() / alignedHeight :
+                                                         (float) sourceRect.y() / m_DecoderParams.height;
+        const float vBottom = m_BindDecoderOutputTextures ?
+                    (sourceRect.y() + sourceRect.height()) / alignedHeight :
+                    (float) (sourceRect.y() + sourceRect.height()) / m_DecoderParams.height;
 
         VERTEX verts[] =
         {
-            {renderRect.x, renderRect.y, 0, vMax},
-            {renderRect.x, renderRect.y+renderRect.h, 0, 0},
-            {renderRect.x+renderRect.w, renderRect.y, uMax, vMax},
-            {renderRect.x+renderRect.w, renderRect.y+renderRect.h, uMax, 0},
+            {renderRect.x, renderRect.y, uMin, vBottom},
+            {renderRect.x, renderRect.y+renderRect.h, uMin, vTop},
+            {renderRect.x+renderRect.w, renderRect.y, uMax, vBottom},
+            {renderRect.x+renderRect.w, renderRect.y+renderRect.h, uMax, vTop},
         };
 
         D3D11_BUFFER_DESC vbDesc = {};
@@ -1456,7 +1561,7 @@ bool D3D11VARenderer::setupRenderingResources()
         D3D11_SUBRESOURCE_DATA vbData = {};
         vbData.pSysMem = verts;
 
-        hr = m_Device->CreateBuffer(&vbDesc, &vbData, &m_VideoVertexBuffer);
+        hr = m_Device->CreateBuffer(&vbDesc, &vbData, &target.vertexBuffer);
         if (FAILED(hr)) {
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                          "ID3D11Device::CreateBuffer() failed: %x",

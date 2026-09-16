@@ -216,6 +216,16 @@ void PlankToolbar::setNetworkLatencyMs(int latencyMs)
     m_NetworkLatencyMs = latencyMs < 0 ? -1 : latencyMs;
 }
 
+void PlankToolbar::setTwoScreenState(bool available, bool inUse)
+{
+    if (m_TwoScreensAvailable == available && m_TwoScreensInUse == inUse) {
+        return;
+    }
+    m_TwoScreensAvailable = available;
+    m_TwoScreensInUse = inUse;
+    redraw();
+}
+
 void PlankToolbar::setAppliedBitrate(
         int requestedKbps, int appliedKbps, int peakKbps)
 {
@@ -628,9 +638,19 @@ PlankToolbar::Action PlankToolbar::handlePointerButton(
                         "PLANK toolbar %s", m_Pinned ? "pinned" : "unpinned");
             redraw();
             break;
-        case Control::Fullscreen:
-            action = Action::ToggleFullscreen;
+        case Control::Fullscreen: {
+            const bool isFullscreen =
+                    (SDL_GetWindowFlags(m_Window) & SDL_WINDOW_FULLSCREEN) != 0;
+            if (m_TwoScreensAvailable && isFullscreen) {
+                // Full screen already: this click switches between using one
+                // monitor and both.
+                action = Action::ToggleTwoScreens;
+            }
+            else {
+                action = Action::ToggleFullscreen;
+            }
             break;
+        }
         case Control::Minimize:
             action = Action::Minimize;
             break;
@@ -925,10 +945,35 @@ void PlankToolbar::redraw()
                             WindowButtonRadius,
                             WindowButtonRadius);
 
-    // Four corners point outward when entering fullscreen and inward when the
-    // next click will restore the decorated window.
     const bool isFullscreen =
             (SDL_GetWindowFlags(m_Window) & SDL_WINDOW_FULLSCREEN) != 0;
+
+    if (m_TwoScreensAvailable && isFullscreen) {
+        // One or two little screens, showing what the next click switches to.
+        painter.setPen(QPen(QColor(226, 232, 239), 1.3,
+                            Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.setBrush(Qt::NoBrush);
+        const qreal screenHeight = 7.0 * WindowGlyphScale;
+        if (m_TwoScreensInUse) {
+            const qreal screenWidth = 5.0 * WindowGlyphScale;
+            const qreal gap = 1.6 * WindowGlyphScale;
+            for (const qreal side : {-1.0, 1.0}) {
+                painter.drawRect(QRectF(fullscreenCenter.x() +
+                                            (side < 0 ? -screenWidth - gap / 2.0 : gap / 2.0),
+                                        fullscreenCenter.y() - screenHeight / 2.0,
+                                        screenWidth, screenHeight));
+            }
+        }
+        else {
+            const qreal screenWidth = 11.0 * WindowGlyphScale;
+            painter.drawRect(QRectF(fullscreenCenter.x() - screenWidth / 2.0,
+                                    fullscreenCenter.y() - screenHeight / 2.0,
+                                    screenWidth, screenHeight));
+        }
+    }
+    else {
+    // Four corners point outward when entering fullscreen and inward when the
+    // next click will restore the decorated window.
     const qreal outer = 6.0 * WindowGlyphScale;
     const qreal inner = 2.0 * WindowGlyphScale;
     const qreal cornerDistance = isFullscreen ? inner : outer;
@@ -946,6 +991,7 @@ void PlankToolbar::redraw()
                              corner + QPointF(0, (isFullscreen ? sy : -sy) *
                                               armLength));
         }
+    }
     }
 
     const QPointF minimizeCenter(m_Width - 55.0, 19.0);

@@ -459,6 +459,9 @@ private:
     // advertise the feature; see NvOutputTopology::ClipboardTextFeature.
     static const std::uint16_t PlankClipboardTextEvent = 5;
     void pollLocalClipboard(Uint64 now);
+    // Paints the window with the PLANK logo so it is not white while the
+    // stream starts.
+    void paintStartupSplash(SDL_Window* window);
     static const int PlankClipboardMaxBytes = 60000;
     bool m_PlankClipboardEnabled = false;
     QMutex m_PlankClipboardLock;

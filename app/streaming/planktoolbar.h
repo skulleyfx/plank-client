@@ -22,6 +22,7 @@ public:
         None,
         Consumed,
         ToggleFullscreen,
+        ToggleTwoScreens,
         Minimize,
         Disconnect,
         KeepWaiting,
@@ -37,6 +38,14 @@ public:
     void setRenderedStats(float fps, float videoMbps, float packetLossPercent);
     // Network round-trip time in milliseconds; negative when not yet measured.
     void setNetworkLatencyMs(int latencyMs);
+
+    /**
+     * @brief Tell the toolbar what the resize button should offer.
+     *
+     * @param available Whether a second client monitor and a two-screen host are available.
+     * @param inUse Whether this session is using two screens.
+     */
+    void setTwoScreenState(bool available, bool inUse);
     void setAppliedBitrate(int requestedKbps, int appliedKbps, int peakKbps);
     Action update(Uint64 now, bool transportAvailable = true);
     void showReconnectPrompt(int unreachableSeconds);
@@ -143,6 +152,8 @@ private:
     float m_PacketLossPercent;
     int m_NetworkLatencyMs;
     int m_LastDrawnNetworkLatencyMs;
+    bool m_TwoScreensAvailable {};
+    bool m_TwoScreensInUse {};
     Uint64 m_LastStayLogTime;
     float m_LastDrawnFps;
     float m_LastDrawnVideoMbps;
