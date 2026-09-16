@@ -722,6 +722,46 @@ Flickable {
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Prevents the screensaver from starting or the display from going to sleep while streaming.")
                 }
+
+                PlankSettingLabel {
+                    text: qsTr("Share clipboard text")
+                }
+
+                PlankCheckBox {
+                    id: clipboardTextCheck
+                    Layout.alignment: Qt.AlignLeft | Qt.AlignVCenter
+                    text: ""
+                    Accessible.name: qsTr("Share clipboard text with the workstation")
+                    checked: StreamingPreferences.plankClipboardText
+                    onCheckedChanged: {
+                        StreamingPreferences.plankClipboardText = checked
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 5000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Copy and paste text between this computer and the workstation. Images and files are never shared.")
+                }
+
+                PlankSettingLabel {
+                    text: qsTr("Keep the stream toolbar on screen")
+                }
+
+                PlankCheckBox {
+                    id: toolbarPinnedCheck
+                    Layout.alignment: Qt.AlignLeft | Qt.AlignVCenter
+                    text: ""
+                    Accessible.name: qsTr("Keep the stream toolbar on screen")
+                    checked: StreamingPreferences.plankToolbarPinned
+                    onCheckedChanged: {
+                        StreamingPreferences.plankToolbarPinned = checked
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 5000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("When off, the toolbar hides a few seconds after you stop using it, and returns when you move the pointer to the top of the screen.")
+                }
             }
         }
     }

@@ -624,6 +624,8 @@ PlankToolbar::Action PlankToolbar::handlePointerButton(
             m_Pinned = !m_Pinned;
             m_Preferences.plankToolbarPinned = m_Pinned;
             m_Preferences.save();
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "PLANK toolbar %s", m_Pinned ? "pinned" : "unpinned");
             redraw();
             break;
         case Control::Fullscreen:
