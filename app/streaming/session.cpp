@@ -2018,8 +2018,16 @@ bool Session::snapshotClientDisplays()
     // Two-screen presentation needs a renderer that draws one frame into two
     // windows. That is the Vulkan renderer everywhere, and the GL renderer on
     // Linux; the Direct3D renderers present to a single window only.
+    // Two screens are remembered per workstation and switched on the stream
+    // toolbar. A host that does not advertise spanned capture, such as Alan's
+    // Linux and Mac hosts, never gets a two-screen session even if this
+    // workstation was once used with two.
+    const bool hostCanSpanDisplays =
+            (m_Computer->plankFeatureFlags &
+             NvOutputTopology::TwoScreenCaptureFeature) != 0;
     m_UseMultiDisplayPresentation = m_IsFullScreen &&
             m_ClientDisplays.size() >= 2 &&
+            hostCanSpanDisplays &&
             m_Computer->plankTwoScreens;
     if (m_UseMultiDisplayPresentation &&
             (m_PlankVideoProfile == StreamingPreferences::PLANK_PROFILE_NVENC_H264_8BIT_444 ||
@@ -2034,8 +2042,9 @@ bool Session::snapshotClientDisplays()
     }
 
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                "Two-screen session: setting=%s fullscreen=%s monitors=%d -> %s",
-                m_Preferences->plankTwoScreens ? "on" : "off",
+                "Two-screen session: workstation=%s host-capable=%s fullscreen=%s monitors=%d -> %s",
+                m_Computer->plankTwoScreens ? "on" : "off",
+                hostCanSpanDisplays ? "yes" : "no",
                 m_IsFullScreen ? "yes" : "no",
                 (int) m_ClientDisplays.size(),
                 m_UseMultiDisplayPresentation ? "using two screens" : "using one screen");

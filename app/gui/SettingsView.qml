@@ -743,25 +743,10 @@ Flickable {
                     ToolTip.text: qsTr("Copy and paste text between this computer and the workstation. Images and files are never shared.")
                 }
 
-                PlankSettingLabel {
-                    text: qsTr("Use two screens")
-                }
-
-                PlankCheckBox {
-                    id: twoScreensCheck
-                    Layout.alignment: Qt.AlignLeft | Qt.AlignVCenter
-                    text: ""
-                    Accessible.name: qsTr("Stream two workstation screens onto two monitors")
-                    checked: StreamingPreferences.plankTwoScreens
-                    onCheckedChanged: {
-                        StreamingPreferences.plankTwoScreens = checked
-                    }
-
-                    ToolTip.delay: 1000
-                    ToolTip.timeout: 5000
-                    ToolTip.visible: hovered
-                    ToolTip.text: qsTr("Streams both workstation screens onto your two monitors. Needs two monitors here and two screens on the workstation; otherwise one screen is used.")
-                }
+                // One or two screens is chosen per workstation, on the stream
+                // toolbar, not here: the same client is used with one-monitor
+                // and two-monitor workstations, and a setting that spans them
+                // all cannot be right for both.
 
                 PlankSettingLabel {
                     text: qsTr("Keep the stream toolbar on screen")

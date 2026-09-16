@@ -277,7 +277,6 @@ public:
     Q_PROPERTY(AudioConfig audioConfig MEMBER audioConfig NOTIFY audioConfigChanged)
     Q_PROPERTY(bool plankToolbarPinned MEMBER plankToolbarPinned NOTIFY plankToolbarPinnedChanged)
     Q_PROPERTY(bool plankClipboardText MEMBER plankClipboardText NOTIFY plankClipboardTextChanged)
-    Q_PROPERTY(bool plankTwoScreens MEMBER plankTwoScreens NOTIFY plankTwoScreensChanged)
     Q_PROPERTY(WindowMode windowMode MEMBER windowMode NOTIFY windowModeChanged)
     Q_PROPERTY(WindowMode recommendedFullScreenMode MEMBER recommendedFullScreenMode CONSTANT)
     Q_PROPERTY(bool muteOnFocusLoss MEMBER muteOnFocusLoss NOTIFY muteOnFocusLossChanged)
@@ -331,7 +330,6 @@ public:
     int identityGbrBitDepth;
     bool plankToolbarPinned;
     bool plankClipboardText;
-    bool plankTwoScreens;
     WindowMode windowMode;
     WindowMode recommendedFullScreenMode;
     Language language;
@@ -346,7 +344,6 @@ signals:
     void audioConfigChanged();
     void plankToolbarPinnedChanged();
     void plankClipboardTextChanged();
-    void plankTwoScreensChanged();
     void windowModeChanged();
     void connectionWarningsChanged();
     void quicUdpPayloadMtuChanged();
