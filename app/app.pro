@@ -324,6 +324,9 @@ HEADERS += \
     streaming/video/overlaymanager.h \
     backend/systemproperties.h
 
+SOURCES += streaming/input/pen.cpp
+HEADERS += streaming/input/pentilt.h
+
 contains(DEFINES, HAVE_LIBINPUT_TABLET) {
     SOURCES += streaming/input/linuxwacom.cpp
     HEADERS += streaming/input/linuxwacom.h

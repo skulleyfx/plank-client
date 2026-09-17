@@ -1,4 +1,5 @@
 #include "linuxwacom.h"
+#include "pentilt.h"
 
 #include <Limelight.h>
 #include <SDL3/SDL.h>
@@ -31,22 +32,8 @@ bool propertyIsSet(udev_device* device, const char* name)
     return value != nullptr && std::strcmp(value, "1") == 0;
 }
 
-void encodeTilt(double tiltX, double tiltY, unsigned short& rotation,
-                unsigned char& tilt)
-{
-    const double pi = std::acos(-1.0);
-    const double x = std::tan(tiltX * pi / 180.0);
-    const double y = std::tan(tiltY * pi / 180.0);
-    const double magnitude = std::atan(std::hypot(x, y)) * 180.0 / pi;
-    double direction = -std::atan2(x, y) * 180.0 / pi;
-    if (direction < 0.0) {
-        direction += 360.0;
-    }
-
-    tilt = static_cast<unsigned char>(std::lround(
-        std::max(0.0, std::min(90.0, magnitude))));
-    rotation = static_cast<unsigned short>(std::lround(direction)) % 360;
-}
+// Shared with the SDL pen capture so both clients encode tilt identically.
+using PlankPen::encodeTilt;
 
 unsigned char toolType(libinput_tablet_tool* tool)
 {

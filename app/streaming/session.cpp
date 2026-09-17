@@ -4951,6 +4951,29 @@ void Session::execInternal()
             }
             m_InputHandler->handleMouseWheelEvent(&event.wheel);
             break;
+
+        // A pen reaches clients without libinput through these events, which
+        // is what gives a Windows client pressure instead of mouse movement.
+        // SDL also synthesizes mouse events from a pen; those still arrive
+        // above and keep the pointer and the toolbar working as before.
+        case SDL_EVENT_PEN_PROXIMITY_IN:
+        case SDL_EVENT_PEN_PROXIMITY_OUT:
+            m_InputHandler->handlePenProximityEvent(&event.pproximity);
+            break;
+        case SDL_EVENT_PEN_DOWN:
+        case SDL_EVENT_PEN_UP:
+            m_InputHandler->handlePenTouchEvent(&event.ptouch);
+            break;
+        case SDL_EVENT_PEN_MOTION:
+            m_InputHandler->handlePenMotionEvent(&event.pmotion);
+            break;
+        case SDL_EVENT_PEN_BUTTON_DOWN:
+        case SDL_EVENT_PEN_BUTTON_UP:
+            m_InputHandler->handlePenButtonEvent(&event.pbutton);
+            break;
+        case SDL_EVENT_PEN_AXIS:
+            m_InputHandler->handlePenAxisEvent(&event.paxis);
+            break;
         }
     }
 

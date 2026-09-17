@@ -45,6 +45,16 @@ public:
 
     void handleMouseWheelEvent(SDL_MouseWheelEvent* event);
 
+    void handlePenProximityEvent(SDL_PenProximityEvent* event);
+
+    void handlePenTouchEvent(SDL_PenTouchEvent* event);
+
+    void handlePenMotionEvent(SDL_PenMotionEvent* event);
+
+    void handlePenButtonEvent(SDL_PenButtonEvent* event);
+
+    void handlePenAxisEvent(SDL_PenAxisEvent* event);
+
     void sendText(QString& string);
 
     void handleRawHidControl(const unsigned char* data, unsigned int length);
@@ -185,6 +195,11 @@ private:
                                    int windowX, int windowY,
                                    bool allowClampedPosition);
 
+    bool isPenCaptureAvailable() const;
+    bool sendPenEvent(unsigned char eventType, SDL_Window* window,
+                      float windowX, float windowY);
+    void resetPenState();
+
     SDL_Window* presentationWindow(Uint32 windowId) const;
     const PlankPresentationOutput* presentationOutput(
         SDL_Window* window) const;
@@ -197,6 +212,18 @@ private:
     } m_SpecialKeyCombos[KeyComboMax];
 
     std::atomic_uint64_t m_StreamDimensions;
+
+    // Pen state between events: SDL reports each axis on its own, and a
+    // position only with motion, so the latest of each is kept here.
+    bool m_PenTipDown;
+    unsigned char m_PenButtons;
+    float m_PenPressure;
+    float m_PenDistance;
+    float m_PenTiltX;
+    float m_PenTiltY;
+    unsigned short m_PenRotation;
+    unsigned char m_PenTilt;
+    bool m_PenEraser;
 
 #ifdef HAVE_LIBINPUT_TABLET
     std::unique_ptr<LinuxWacomInput> m_LinuxWacomInput;
