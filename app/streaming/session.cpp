@@ -2990,7 +2990,52 @@ bool Session::startConnectionAsync(bool reconnecting,
                     e.getStatusCode() == 409 &&
                     QString::fromUtf8(e.getStatusMessage()) ==
                         QStringLiteral("PLANK workstation session is active");
-            if (displayTransitionStarted) {
+            // A workstation that will not change its display layout can still
+            // be streamed as it is, which is far better than refusing to
+            // connect. Only the scaled-span mode is retried: native scaling
+            // took its stream size from the layout we are abandoning. Two
+            // screens are not retried either, because one host screen spread
+            // over two monitors is not what was asked for.
+            const bool layoutRefused =
+                    m_Computer->plankAuthentication &&
+                    !displayTransitionStarted &&
+                    !m_HostLayoutFallbackApplied &&
+                    !m_UseMultiDisplayPresentation &&
+                    e.getStatusCode() == 503 &&
+                    statusMessage ==
+                        QStringLiteral("Host display layout transition is currently unavailable") &&
+                    m_ResolvedScalingMode == NvOutputTopology::ScaledSpanMode &&
+                    m_ResolvedHostLayout != NvOutputTopology::PhysicalHostLayout;
+            const bool twoScreenLayoutRefused =
+                    m_Computer->plankAuthentication &&
+                    !displayTransitionStarted &&
+                    m_UseMultiDisplayPresentation &&
+                    e.getStatusCode() == 503 &&
+                    statusMessage ==
+                        QStringLiteral("Host display layout transition is currently unavailable");
+            if (twoScreenLayoutRefused) {
+                emit displayLaunchError(
+                            tr("The workstation cannot give you two screens. It needs two "
+                               "displays of its own, and a display added by other "
+                               "remote-desktop software does not count. Switch back to one "
+                               "screen on the stream toolbar."));
+                qInfo() << "The workstation refused a two-screen layout; it has fewer than two displays of its own";
+                return false;
+            }
+            if (layoutRefused) {
+                m_HostLayoutFallbackApplied = true;
+                qInfo() << "The workstation refused the" << m_ResolvedHostLayout
+                        << "layout; streaming its displays as they are";
+                m_ResolvedHostLayout = NvOutputTopology::PhysicalHostLayout;
+                m_ResolvedVirtualModes.clear();
+                // Falls through to the bookkeeping every successful launch
+                // needs; a second failure is the caller's to report.
+                startApp();
+                setPlankReconnectStatus(
+                            "The workstation kept its own screen resolution.", false);
+                qInfo() << "PLANK launched with the workstation's own display layout";
+            }
+            else if (displayTransitionStarted) {
                 constexpr int RetryIntervalMs = 500;
                 constexpr int MaximumWaitMs = 45000;
                 constexpr int CancellationPollMs = 50;

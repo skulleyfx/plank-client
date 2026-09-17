@@ -415,6 +415,9 @@ private:
     QString m_PlankPassword;
     QString m_ResolvedScalingMode;
     QString m_ResolvedHostLayout;
+    // Set once a refused layout has been retried as the host's own, so a
+    // workstation that keeps refusing is reported rather than retried forever.
+    bool m_HostLayoutFallbackApplied = false;
     QStringList m_ResolvedVirtualModes;
 
     struct ClientDisplaySnapshot {
