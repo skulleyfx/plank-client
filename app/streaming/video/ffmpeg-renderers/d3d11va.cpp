@@ -9,6 +9,7 @@
 #include "streaming/streamutils.h"
 #include "streaming/session.h"
 
+#include <algorithm>
 #include <SDL3/SDL_system.h>
 #include <VersionHelpers.h>
 
@@ -1056,6 +1057,17 @@ void D3D11VARenderer::notifyOverlayUpdated(Overlay::OverlayType type)
     else if (type == Overlay::OverlayDebug) {
         // Top left
         renderRect.x = 0;
+        renderRect.y = m_DisplayHeight - newSurface->h;
+    }
+    else if (type == Overlay::OverlayToolbar) {
+        // Along the top edge, wherever the toolbar was dragged to. Without
+        // this the rect stayed at the origin, which is the bottom of this
+        // screen space: the toolbar was drawn at the bottom of the window
+        // while every click was tested against the top, so it could not be
+        // used at all.
+        renderRect.x = Session::get()->getOverlayManager()
+                           .getOverlayHorizontalPosition(type) *
+                       std::max(0, m_DisplayWidth - newSurface->w);
         renderRect.y = m_DisplayHeight - newSurface->h;
     }
 

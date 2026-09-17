@@ -9,6 +9,7 @@
 #include <streaming/streamutils.h>
 #include <streaming/session.h>
 
+#include <algorithm>
 #include <SDL3/SDL_system.h>
 
 #define WIN32_LEAN_AND_MEAN
@@ -879,6 +880,16 @@ void DXVA2Renderer::notifyOverlayUpdated(Overlay::OverlayType type)
     else if (type == Overlay::OverlayDebug) {
         // Top left
         renderRect.x = 0;
+        renderRect.y = 0;
+    }
+    else if (type == Overlay::OverlayToolbar) {
+        // Along the top edge, wherever the toolbar was dragged to. Note this
+        // renderer's screen space puts the top at y = 0, unlike the Direct3D
+        // 11 one. Without this the toolbar ignored its position and sat at
+        // the left edge, where clicks were tested somewhere else.
+        renderRect.x = Session::get()->getOverlayManager()
+                           .getOverlayHorizontalPosition(type) *
+                       std::max(0, m_DisplayWidth - newSurface->w);
         renderRect.y = 0;
     }
 
