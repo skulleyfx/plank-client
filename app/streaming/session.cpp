@@ -892,6 +892,12 @@ bool Session::negotiatePlankTransportSession(quint16 sessionPort, QString& error
     case VIDEO_FORMAT_H264_HIGH10_444:
         tenBit = true;
         break;
+    case VIDEO_FORMAT_H265:
+        // Plain HEVC Main: 8-bit 4:2:0, used for two-screen so older client
+        // GPUs decode the wide picture in hardware.
+        codec = 1;
+        chroma = 0;
+        break;
     case VIDEO_FORMAT_H265_REXT8_444:
         codec = 1;
         break;
