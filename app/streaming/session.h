@@ -21,6 +21,7 @@
 #include "audio/renderers/renderer.h"
 #include "video/overlaymanager.h"
 #include "videopacketlosswindow.h"
+#include "planktoolbar.h"
 
 class ComputerManager;
 class PlankToolbar;
@@ -213,6 +214,7 @@ private:
 
     bool beginPlankReconnect(PlankReconnectState& state);
     void setPlankReconnectStatus(const char* text, bool warning);
+    void applyToolbarAction(PlankToolbar::Action action);
 
     bool runPlankReconnect();
 

@@ -3387,6 +3387,55 @@ void Session::respondToActiveSessionTakeover(bool takeOver)
     }
 }
 
+/**
+ * @brief Carry out a toolbar action that is the same wherever it is clicked.
+ *
+ * Three event loops read the toolbar: while streaming, while reconnecting,
+ * and while winding a session down. Handling actions separately in each let
+ * the two-screen switch exist in one of them and silently do nothing in the
+ * one an artist actually clicks in. Disconnect stays with the callers,
+ * because only they know how to leave their own loop.
+ *
+ * @param action Action reported by the toolbar.
+ */
+void Session::applyToolbarAction(PlankToolbar::Action action)
+{
+    switch (action) {
+    case PlankToolbar::Action::ToggleTwoScreens: {
+        const bool wantTwo = !m_UseMultiDisplayPresentation;
+        {
+            QWriteLocker lock(&m_Computer->lock);
+            m_Computer->plankTwoScreens = wantTwo;
+        }
+        if (m_ComputerManager != nullptr) {
+            m_ComputerManager->clientSideAttributeUpdated(m_Computer);
+        }
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Two-screen preference for %s set to %s",
+                    qPrintable(m_Computer->name), wantTwo ? "on" : "off");
+        setPlankReconnectStatus(
+                    wantTwo ?
+                        "Two screens set for this workstation. Disconnect and connect again to use them." :
+                        "One screen set for this workstation. Disconnect and connect again to use it.",
+                    false);
+        break;
+    }
+    case PlankToolbar::Action::ToggleFullscreen:
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "PLANK toolbar fullscreen toggle requested");
+        toggleFullscreen();
+        m_PlankToolbar->notifyWindowChanged();
+        break;
+    case PlankToolbar::Action::Minimize:
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "PLANK toolbar minimize requested");
+        minimizePresentationWindows();
+        break;
+    default:
+        break;
+    }
+}
+
 void Session::setPlankReconnectStatus(const char* text, bool warning)
 {
     const bool nativeStatus = m_PlankToolbar &&
@@ -4372,32 +4421,7 @@ void Session::execInternal()
                 reconnectDecisionDeadline = SDL_GetTicks() +
                         static_cast<Uint64>(m_Preferences->plankUnreachableTimeoutSeconds) * 1000;
             }
-            if (action == PlankToolbar::Action::ToggleTwoScreens) {
-                const bool wantTwo = !m_UseMultiDisplayPresentation;
-                {
-                    QWriteLocker lock(&m_Computer->lock);
-                    m_Computer->plankTwoScreens = wantTwo;
-                }
-                m_ComputerManager->clientSideAttributeUpdated(m_Computer);
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                            "Two-screen preference for %s set to %s",
-                            qPrintable(m_Computer->name), wantTwo ? "on" : "off");
-                setPlankReconnectStatus(
-                            wantTwo ?
-                                "Two screens set for this workstation. Disconnect and connect again to use them." :
-                                "One screen set for this workstation. Disconnect and connect again to use it.",
-                            false);
-            }
-            if (action == PlankToolbar::Action::ToggleFullscreen) {
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                            "PLANK toolbar fullscreen toggle requested");
-                toggleFullscreen();
-                m_PlankToolbar->notifyWindowChanged();
-            } else if (action == PlankToolbar::Action::Minimize) {
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                            "PLANK toolbar minimize requested");
-                minimizePresentationWindows();
-            }
+            applyToolbarAction(action);
         }
 
         // The old desktop worker may lose Xorg before it can send a logout
@@ -4477,12 +4501,7 @@ void Session::execInternal()
                                     "PLANK toolbar disconnect requested during reconnect");
                         goto DispatchDeferredCleanup;
                     }
-                    if (action == PlankToolbar::Action::ToggleFullscreen) {
-                        toggleFullscreen();
-                        m_PlankToolbar->notifyWindowChanged();
-                    } else if (action == PlankToolbar::Action::Minimize) {
-                        minimizePresentationWindows();
-                    }
+                    applyToolbarAction(action);
                 }
                 break;
             case SDL_EVENT_MOUSE_WHEEL:
@@ -4883,17 +4902,10 @@ void Session::execInternal()
                                 "PLANK toolbar disconnect requested");
                     goto DispatchDeferredCleanup;
                 }
-                if (action == PlankToolbar::Action::ToggleFullscreen) {
-                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                                "PLANK toolbar fullscreen toggle requested");
-                    toggleFullscreen();
-                    m_PlankToolbar->notifyWindowChanged();
-                    break;
-                }
-                if (action == PlankToolbar::Action::Minimize) {
-                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                                "PLANK toolbar minimize requested");
-                    minimizePresentationWindows();
+                if (action == PlankToolbar::Action::ToggleTwoScreens ||
+                        action == PlankToolbar::Action::ToggleFullscreen ||
+                        action == PlankToolbar::Action::Minimize) {
+                    applyToolbarAction(action);
                     break;
                 }
                 if (action == PlankToolbar::Action::Consumed) {
