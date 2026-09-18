@@ -13,8 +13,11 @@ void SdlInputHandler::handleMouseButtonEvent(SDL_MouseButtonEvent* event)
         return;
     }
 
-    if (event->which == SDL_TOUCH_MOUSEID) {
-        // Ignore synthetic mouse events
+    if (event->which == SDL_TOUCH_MOUSEID ||
+            (event->which == SDL_PEN_MOUSEID && isPenCaptureAvailable())) {
+        // Ignore synthetic mouse events. A pen arrives as pen events and
+        // again as mouse movement; sending both makes the host follow two
+        // pointers at once, which an artist sees as a pen that jumps.
         return;
     }
     activateCompositorCursor();
@@ -84,8 +87,10 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event,
         // Not capturing
         return;
     }
-    else if (event->which == SDL_TOUCH_MOUSEID) {
-        // Ignore synthetic mouse events
+    else if (event->which == SDL_TOUCH_MOUSEID ||
+             (event->which == SDL_PEN_MOUSEID && isPenCaptureAvailable())) {
+        // Ignore synthetic mouse events, including the mouse movement a pen
+        // produces alongside its own events.
         return;
     }
     activateCompositorCursor();
@@ -196,8 +201,10 @@ void SdlInputHandler::handleMouseWheelEvent(SDL_MouseWheelEvent* event)
         // Not capturing
         return;
     }
-    else if (event->which == SDL_TOUCH_MOUSEID) {
-        // Ignore synthetic mouse events
+    else if (event->which == SDL_TOUCH_MOUSEID ||
+             (event->which == SDL_PEN_MOUSEID && isPenCaptureAvailable())) {
+        // Ignore synthetic mouse events, including the mouse movement a pen
+        // produces alongside its own events.
         return;
     }
     activateCompositorCursor();

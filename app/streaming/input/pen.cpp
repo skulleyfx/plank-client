@@ -100,6 +100,23 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
     // Pressure while drawing, distance while hovering, exactly as the
     // libinput path reports it.
     const float pressureOrDistance = m_PenTipDown ? m_PenPressure : m_PenDistance;
+
+    // One line per second while a pen is in use. Without it a pen that draws
+    // nothing is indistinguishable from a pen the client never saw, and a
+    // tablet is the one input nobody can reproduce from a log of its own.
+    const Uint64 now = SDL_GetTicks();
+    if (now - m_PenLastLogTime >= 1000) {
+        m_PenLastLogTime = now;
+        SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
+                    "PLANK pen: event=%u tip=%s pressure=%.3f distance=%.3f "
+                    "tilt=%u rotation=%u buttons=0x%x eraser=%s at %.3f,%.3f",
+                    eventType, m_PenTipDown ? "down" : "up",
+                    m_PenPressure, m_PenDistance,
+                    static_cast<unsigned>(m_PenTilt),
+                    static_cast<unsigned>(m_PenRotation),
+                    m_PenButtons, m_PenEraser ? "yes" : "no",
+                    normalizedX, normalizedY);
+    }
     const unsigned char toolType = m_PenEraser ? LI_TOOL_TYPE_ERASER : LI_TOOL_TYPE_PEN;
 
     return LiSendPenEvent(eventType, toolType, m_PenButtons,
@@ -136,7 +153,7 @@ void SdlInputHandler::handlePenTouchEvent(SDL_PenTouchEvent* event)
     }
 
     m_PenEraser = event->eraser;
-    m_PenTipDown = event->down;
+    m_PenTipDown = event->down || (event->pen_state & SDL_PEN_INPUT_DOWN) != 0;
     sendPenEvent(event->down ? LI_TOUCH_EVENT_DOWN : LI_TOUCH_EVENT_UP,
                  window, event->x, event->y);
 }
@@ -151,7 +168,9 @@ void SdlInputHandler::handlePenMotionEvent(SDL_PenMotionEvent* event)
         return;
     }
 
-    m_PenTipDown = (event->pen_state & SDL_PEN_INPUT_DOWN) != 0;
+    // A pen reporting pressure is in contact even if the flag is absent.
+    m_PenTipDown = (event->pen_state & SDL_PEN_INPUT_DOWN) != 0 ||
+                   m_PenPressure > 0.0f;
     sendPenEvent(m_PenTipDown ? LI_TOUCH_EVENT_MOVE : LI_TOUCH_EVENT_HOVER,
                  window, event->x, event->y);
 }
@@ -197,6 +216,15 @@ void SdlInputHandler::handlePenAxisEvent(SDL_PenAxisEvent* event)
     if (!isPenCaptureAvailable()) {
         return;
     }
+
+    // Every pen event carries the full input state, so the tip is tracked
+    // from all of them rather than from touch events alone. A tablet that
+    // reports pressure without ever setting the down flag would otherwise
+    // draw nothing: pressure is only sent while the tip is down, so the host
+    // saw a pen hovering across the picture.
+    m_PenTipDown = (event->pen_state & SDL_PEN_INPUT_DOWN) != 0 ||
+                   (event->axis == SDL_PEN_AXIS_PRESSURE && event->value > 0.0f) ||
+                   (m_PenTipDown && m_PenPressure > 0.0f);
 
     switch (event->axis) {
     case SDL_PEN_AXIS_PRESSURE:

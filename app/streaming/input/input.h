@@ -224,6 +224,7 @@ private:
     unsigned short m_PenRotation;
     unsigned char m_PenTilt;
     bool m_PenEraser;
+    Uint64 m_PenLastLogTime;
 
 #ifdef HAVE_LIBINPUT_TABLET
     std::unique_ptr<LinuxWacomInput> m_LinuxWacomInput;
