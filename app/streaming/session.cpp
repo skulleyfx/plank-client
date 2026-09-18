@@ -762,7 +762,9 @@ Session::Session(NvComputer* computer, NvApp& app,
                  m_PlankVideoProfile ==
                      StreamingPreferences::PLANK_PROFILE_NVENC_H264_8BIT_444 ||
                  m_PlankVideoProfile ==
-                     StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_8BIT_444) ? 8 : 10;
+                     StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_8BIT_444 ||
+                 m_PlankVideoProfile ==
+                     StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_8BIT_420) ? 8 : 10;
         // Decoder selection is internal and exact-profile constrained. Hardware
         // is accepted only after a test frame proves the requested bit depth,
         // chroma sampling, and identity mapping; otherwise the same profile
@@ -1730,6 +1732,9 @@ bool Session::initialize()
         break;
     case StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_8BIT_444:
         selectedVideoFormat = VIDEO_FORMAT_H265_REXT8_444;
+        break;
+    case StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_8BIT_420:
+        selectedVideoFormat = VIDEO_FORMAT_H265;
         break;
     case StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_10BIT_444:
         selectedVideoFormat = VIDEO_FORMAT_H265_REXT10_444;
@@ -2922,6 +2927,9 @@ bool Session::startConnectionAsync(bool reconnecting,
             break;
         case StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_8BIT_444:
             encodingMode = QStringLiteral("hevc-8-444-nvenc");
+            break;
+        case StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_8BIT_420:
+            encodingMode = QStringLiteral("hevc-8-420-nvenc");
             break;
         case StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_10BIT_444:
             encodingMode = QStringLiteral("hevc-10-444-nvenc");

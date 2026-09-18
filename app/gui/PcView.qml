@@ -652,6 +652,10 @@ CenteredGridView {
                     val: StreamingPreferences.PLANK_PROFILE_NVENC_H264_8BIT_444
                 }
                 ListElement {
+                    text: qsTr("H.265 8-bit 4:2:0 — NVENC (best for limited bandwidth)")
+                    val: StreamingPreferences.PLANK_PROFILE_NVENC_HEVC_8BIT_420
+                }
+                ListElement {
                     text: qsTr("H.265 8-bit 4:4:4 (identity GBR) — NVENC")
                     val: StreamingPreferences.PLANK_PROFILE_NVENC_HEVC_8BIT_444
                 }

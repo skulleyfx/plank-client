@@ -36,6 +36,7 @@ public:
         PLANK_PROFILE_NVENC_HEVC_10BIT_444,
         PLANK_PROFILE_APPLE_HEVC_10BIT_420,
         PLANK_PROFILE_APPLE_HEVC_10BIT_444,
+        PLANK_PROFILE_NVENC_HEVC_8BIT_420,
         PLANK_PROFILE_COUNT,
     };
     Q_ENUM(PlankVideoProfile)
@@ -92,8 +93,9 @@ public:
 
     static bool isPlankNvencProfile(int profile)
     {
-        return profile >= PLANK_PROFILE_NVENC_H264_8BIT_444 &&
-               profile <= PLANK_PROFILE_NVENC_HEVC_10BIT_444;
+        return (profile >= PLANK_PROFILE_NVENC_H264_8BIT_444 &&
+                profile <= PLANK_PROFILE_NVENC_HEVC_10BIT_444) ||
+               profile == PLANK_PROFILE_NVENC_HEVC_8BIT_420;
     }
 
     static bool isPlankH264NvencProfile(int profile)
@@ -131,6 +133,7 @@ public:
     {
         return profile == PLANK_PROFILE_NVENC_HEVC_8BIT_444 ||
                profile == PLANK_PROFILE_NVENC_HEVC_10BIT_444 ||
+               profile == PLANK_PROFILE_NVENC_HEVC_8BIT_420 ||
                isPlankAppleProfile(profile) ?
                    PlankHevcDefaultBitrateKbps :
                    PlankH264DefaultBitrateKbps;
