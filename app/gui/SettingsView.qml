@@ -743,6 +743,26 @@ Flickable {
                     ToolTip.text: qsTr("Copy and paste text between this computer and the workstation. Images and files are never shared.")
                 }
 
+                PlankSettingLabel {
+                    text: qsTr("Adapt to my connection")
+                }
+
+                PlankCheckBox {
+                    id: adaptiveBitrateCheck
+                    Layout.alignment: Qt.AlignLeft | Qt.AlignVCenter
+                    text: ""
+                    Accessible.name: qsTr("Adapt the bitrate to my connection")
+                    checked: StreamingPreferences.plankAdaptiveBitrate
+                    onCheckedChanged: {
+                        StreamingPreferences.plankAdaptiveBitrate = checked
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 5000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Let the workstation lower the video rate when your connection can't keep up, and raise it again when it clears. Recommended when connecting over the internet. Your bitrate setting is the ceiling.")
+                }
+
                 // One or two screens is chosen per workstation, on the stream
                 // toolbar, not here: the same client is used with one-monitor
                 // and two-monitor workstations, and a setting that spans them

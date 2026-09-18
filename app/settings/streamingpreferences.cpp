@@ -14,6 +14,7 @@
 #define SER_HOSTAUDIO "hostaudio"
 #define SER_AUDIOCFG "audiocfg"
 #define SER_PLANK_CLIPBOARD_TEXT "plankclipboardtext"
+#define SER_PLANK_ADAPTIVE_BITRATE "plankadaptivebitrate"
 #define SER_WINDOWMODE "windowmode"
 #define SER_MDNS "mdns"
 #define SER_CONNWARNINGS "connwarnings"
@@ -81,6 +82,7 @@ void StreamingPreferences::reload()
     fps = settings.value(SER_FPS, 60).toInt();
     identityGbrBitDepth = 10;
     plankClipboardText = settings.value(SER_PLANK_CLIPBOARD_TEXT, true).toBool();
+    plankAdaptiveBitrate = settings.value(SER_PLANK_ADAPTIVE_BITRATE, true).toBool();
     // Off by default: a first connection always uses one screen.
     enableVsync = settings.value(SER_VSYNC, true).toBool();
     playAudioOnHost = settings.value(SER_HOSTAUDIO, false).toBool();
@@ -261,6 +263,7 @@ void StreamingPreferences::save()
     settings.setValue(SER_SHOWPERFOVERLAY, showPerformanceOverlay);
     settings.setValue(SER_AUDIOCFG, static_cast<int>(audioConfig));
     settings.setValue(SER_PLANK_CLIPBOARD_TEXT, plankClipboardText);
+    settings.setValue(SER_PLANK_ADAPTIVE_BITRATE, plankAdaptiveBitrate);
     settings.setValue(SER_WINDOWMODE, static_cast<int>(windowMode));
     settings.setValue(SER_LANGUAGE, static_cast<int>(language));
     settings.setValue(SER_MUTEONFOCUSLOSS, muteOnFocusLoss);

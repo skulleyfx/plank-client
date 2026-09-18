@@ -2984,7 +2984,11 @@ bool Session::startConnectionAsync(bool reconnecting,
                            NvOutputTopology::SupportedFeatureFlags) |
                               (m_UseMultiDisplayPresentation ?
                                    (m_Computer->plankFeatureFlags &
-                                    NvOutputTopology::TwoScreenCaptureFeature) : 0),
+                                    NvOutputTopology::TwoScreenCaptureFeature) : 0) |
+                              ((m_Preferences->plankAdaptiveBitrate &&
+                                (m_Computer->plankFeatureFlags &
+                                 NvOutputTopology::AdaptiveBitrateFeature)) ?
+                                   NvOutputTopology::AdaptiveBitrateFeature : 0),
                           takeOverActiveSession,
                           m_ResolvedHostLayout,
                           m_ResolvedVirtualModes.value(0),

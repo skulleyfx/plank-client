@@ -64,6 +64,10 @@ struct NvOutputTopology
     // Windows hosts join two outputs into one canvas only for clients that
     // ask, so this bit is sent per launch, not in SupportedFeatureFlags.
     static const int TwoScreenCaptureFeature = 0x800000;
+    // The client asks the host to fit the encoder to its link. Like two
+    // screens it is a per-launch request, sent only when the user wants it,
+    // so it is not part of SupportedFeatureFlags.
+    static const int AdaptiveBitrateFeature = 0x1000000;
     static const int FixedCaptureFlags = FixedCaptureFeature | OutputTopologyFeature |
             TopologyGenerationFeature | HostLayoutMetadataFeature | CompositeSourceRegionsFeature |
             MacDesktopPreparationFeature | MacEncodingProfileFeature;
