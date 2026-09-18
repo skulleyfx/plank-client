@@ -1740,6 +1740,15 @@ bool Session::initialize()
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
         return false;
     }
+    // Two screens side by side make a 5120-wide picture. Decoding that in
+    // 4:4:4 needs an RTX-class GPU; a Quadro P5000 and other older cards fall
+    // back to software decode, which is unusably slow. Stream two screens in
+    // HEVC 4:2:0 instead, which every HEVC-capable GPU decodes in hardware.
+    if (m_UseMultiDisplayPresentation) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Two-screen session: using HEVC 4:2:0 so the wide picture decodes in hardware");
+        selectedVideoFormat = VIDEO_FORMAT_H265;
+    }
     if (!(selectedVideoFormat & VIDEO_FORMAT_MASK_YUV444) ||
             isIdentityGbrEnabledForFormat(selectedVideoFormat) ||
             StreamingPreferences::isPlankAppleProfile(m_PlankVideoProfile)) {
@@ -2924,6 +2933,11 @@ bool Session::startConnectionAsync(bool reconnecting,
             emit displayLaunchError(tr("The bookmark contains an invalid encoding profile."));
             return false;
         }
+        // Match the 4:2:0 video format chosen for two screens above, so the
+        // host encodes what this client asked the decoder to expect.
+        if (m_UseMultiDisplayPresentation) {
+            encodingMode = QStringLiteral("hevc-8-420-nvenc");
+        }
         const auto startApp = [&]() {
             if (macCapture) {
                 QString pin;
@@ -3411,13 +3425,23 @@ void Session::applyToolbarAction(PlankToolbar::Action action)
             m_ComputerManager->clientSideAttributeUpdated(m_Computer);
         }
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Two-screen preference for %s set to %s",
+                    "Two-screen preference for %s set to %s; reconnecting to apply it",
                     qPrintable(m_Computer->name), wantTwo ? "on" : "off");
         setPlankReconnectStatus(
-                    wantTwo ?
-                        "Two screens set for this workstation. Disconnect and connect again to use them." :
-                        "One screen set for this workstation. Disconnect and connect again to use it.",
+                    wantTwo ? "Switching to two screens..."
+                            : "Switching to one screen...",
                     false);
+        // Apply it now by reconnecting, rather than asking the artist to
+        // disconnect and connect again by hand. The reconnect re-reads the
+        // preference and negotiates the new screen count. On the two-window
+        // layout a status message alone can go unseen, so the button appeared
+        // to do nothing at all.
+        {
+            SDL_Event reconnectEvent = {};
+            reconnectEvent.type = SDL_EVENT_USER;
+            reconnectEvent.user.code = SDL_CODE_PLANK_RECONNECT;
+            SDL_PushEvent(&reconnectEvent);
+        }
         break;
     }
     case PlankToolbar::Action::ToggleFullscreen:

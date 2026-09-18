@@ -1519,8 +1519,41 @@ bool D3D11VARenderer::setupRenderingResources()
                 continue;
             }
             sourceRect = slice.sourceRect.toRect();
-            // The slice is in output-local pixels already.
-            destinationRect = slice.destinationRect;
+            // The slice's destination is in canvas-output-local pixels, whose
+            // extent is the monitor's size within the client canvas. The
+            // window it lands in may have a different pixel size (a monitor
+            // not at its native resolution, or one that is a different size
+            // from its neighbour), so scale the destination from canvas
+            // pixels into window pixels. Without this the picture is
+            // letterboxed on a monitor whose window size and canvas size
+            // disagree, which is what leaves one screen short on the right
+            // and the other small and boxed in.
+            const int canvasW = target.canvasRect.width();
+            const int canvasH = target.canvasRect.height();
+            if (canvasW > 0 && canvasH > 0 &&
+                    (canvasW != target.width || canvasH != target.height)) {
+                destinationRect = QRect(
+                    qRound((qreal) slice.destinationRect.x() * target.width / canvasW),
+                    qRound((qreal) slice.destinationRect.y() * target.height / canvasH),
+                    qRound((qreal) slice.destinationRect.width() * target.width / canvasW),
+                    qRound((qreal) slice.destinationRect.height() * target.height / canvasH));
+            }
+            else {
+                destinationRect = slice.destinationRect;
+            }
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "PLANK two-screen slice: decoder=%dx%d canvas=%dx%d "
+                        "monitor canvasRect=%dx%d+%d+%d window=%dx%d "
+                        "src=%dx%d+%d+%d dst=%dx%d+%d+%d",
+                        m_DecoderParams.width, m_DecoderParams.height,
+                        m_PresentationCanvasSize.width(), m_PresentationCanvasSize.height(),
+                        target.canvasRect.width(), target.canvasRect.height(),
+                        target.canvasRect.x(), target.canvasRect.y(),
+                        target.width, target.height,
+                        sourceRect.width(), sourceRect.height(),
+                        sourceRect.x(), sourceRect.y(),
+                        destinationRect.width(), destinationRect.height(),
+                        destinationRect.x(), destinationRect.y());
         }
         else {
             // Scale video to the window size while preserving aspect ratio
