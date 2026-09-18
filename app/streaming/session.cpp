@@ -4246,6 +4246,17 @@ void Session::execInternal()
     // sleep precision and more accurate callback timing.
     SDL_SetHint(SDL_HINT_TIMER_RESOLUTION, "1");
 
+    // SDL turns every pen event into a mouse event as well. When the pen is
+    // captured for the host, that duplicate makes the host follow two
+    // pointers at once, which an artist sees as a pen that jumps. Stop them
+    // at the source rather than recognising them later.
+    if (m_InputHandler->isPenCaptureAvailable()) {
+        SDL_SetHint(SDL_HINT_PEN_MOUSE_EVENTS, "0");
+        SDL_SetHint(SDL_HINT_PEN_TOUCH_EVENTS, "0");
+        SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
+                    "PLANK pen capture active; synthetic mouse events from the pen are off");
+    }
+
     SDL_DisplayID currentDisplayId = SDL_GetDisplayForWindow(m_Window);
 
     // Now that we're about to stream, any SDL_EVENT_QUIT event is expected

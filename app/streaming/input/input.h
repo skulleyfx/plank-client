@@ -55,6 +55,14 @@ public:
 
     void handlePenAxisEvent(SDL_PenAxisEvent* event);
 
+    /**
+     * @brief Whether this client captures a pen itself.
+     *
+     * False where libinput owns the tablet, and where the host does not
+     * accept pen events.
+     */
+    bool isPenCaptureAvailable() const;
+
     void sendText(QString& string);
 
     void handleRawHidControl(const unsigned char* data, unsigned int length);
@@ -195,7 +203,6 @@ private:
                                    int windowX, int windowY,
                                    bool allowClampedPosition);
 
-    bool isPenCaptureAvailable() const;
     bool sendPenEvent(unsigned char eventType, SDL_Window* window,
                       float windowX, float windowY);
     void resetPenState();
@@ -225,6 +232,7 @@ private:
     unsigned char m_PenTilt;
     bool m_PenEraser;
     Uint64 m_PenLastLogTime;
+    bool m_PenPressureSeen;
 
 #ifdef HAVE_LIBINPUT_TABLET
     std::unique_ptr<LinuxWacomInput> m_LinuxWacomInput;

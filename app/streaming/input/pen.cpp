@@ -35,6 +35,8 @@ void SdlInputHandler::resetPenState()
     m_PenTiltX = 0.0f;
     m_PenTiltY = 0.0f;
     m_PenEraser = false;
+    // Whether this tablet reports pressure at all is a property of the
+    // device, so it is not forgotten when a pen leaves proximity.
 }
 
 bool SdlInputHandler::isPenCaptureAvailable() const
@@ -98,8 +100,13 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
     }
 
     // Pressure while drawing, distance while hovering, exactly as the
-    // libinput path reports it.
-    const float pressureOrDistance = m_PenTipDown ? m_PenPressure : m_PenDistance;
+    // libinput path reports it. A tablet that reports contact but no pressure
+    // axis at all would otherwise draw every stroke at zero pressure, which
+    // is indistinguishable from not drawing: treat its contact as full
+    // pressure instead, so the pen works while the driver stays quiet about
+    // how hard it is pressed.
+    const float contactPressure = m_PenPressureSeen ? m_PenPressure : 1.0f;
+    const float pressureOrDistance = m_PenTipDown ? contactPressure : m_PenDistance;
 
     // One line per second while a pen is in use. Without it a pen that draws
     // nothing is indistinguishable from a pen the client never saw, and a
@@ -108,10 +115,12 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
     if (now - m_PenLastLogTime >= 1000) {
         m_PenLastLogTime = now;
         SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
-                    "PLANK pen: event=%u tip=%s pressure=%.3f distance=%.3f "
+                    "PLANK pen: event=%u tip=%s pressure=%.3f%s distance=%.3f "
                     "tilt=%u rotation=%u buttons=0x%x eraser=%s at %.3f,%.3f",
                     eventType, m_PenTipDown ? "down" : "up",
-                    m_PenPressure, m_PenDistance,
+                    pressureOrDistance,
+                    m_PenPressureSeen ? "" : " (no pressure axis reported)",
+                    m_PenDistance,
                     static_cast<unsigned>(m_PenTilt),
                     static_cast<unsigned>(m_PenRotation),
                     m_PenButtons, m_PenEraser ? "yes" : "no",
@@ -229,6 +238,7 @@ void SdlInputHandler::handlePenAxisEvent(SDL_PenAxisEvent* event)
     switch (event->axis) {
     case SDL_PEN_AXIS_PRESSURE:
         m_PenPressure = event->value;
+        m_PenPressureSeen = true;
         break;
     case SDL_PEN_AXIS_DISTANCE:
         m_PenDistance = event->value;
