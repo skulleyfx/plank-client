@@ -10,6 +10,7 @@ PlankComboBox {
     property string hostAddress: ""
     property bool probingEnabled: false
     property int hostPlatform: 0
+    property var hostEncodingModes: []
     property int captureSource: StreamingPreferences.PLANK_CAPTURE_NVFBC_8BIT
     property int requestId: 0
     property bool rebuilding: false
@@ -40,6 +41,7 @@ PlankComboBox {
     function scheduleProbe() {
         requestId = 0
         hostPlatform = 0
+        hostEncodingModes = []
         rebuild()
         probeTimer.stop()
         if (probingEnabled && hostAddress.trim() !== "") probeTimer.restart()
@@ -64,8 +66,14 @@ PlankComboBox {
         target: ComputerManager
         function onHostPlatformDetected(id, address, platform) {
             if (!control.probingEnabled || id !== control.requestId || address !== control.hostAddress.trim()) return
+            control.hostPlatform = platform
+            control.rebuild()
+        }
+        function onHostCapabilitiesDetected(id, address, platform, encodingModes) {
+            if (!control.probingEnabled || id !== control.requestId || address !== control.hostAddress.trim()) return
             control.requestId = 0
             control.hostPlatform = platform
+            control.hostEncodingModes = encodingModes
             control.rebuild()
         }
     }

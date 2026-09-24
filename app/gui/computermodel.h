@@ -54,6 +54,8 @@ public:
 
     Q_INVOKABLE int plankCaptureSource(int computerIndex) const;
 
+    Q_INVOKABLE QStringList plankEncodingModes(int computerIndex) const;
+
     Q_INVOKABLE QVariantList plankProfileBitratesKbps(
             int computerIndex) const;
 

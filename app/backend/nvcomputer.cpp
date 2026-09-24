@@ -100,6 +100,7 @@ bool NvComputer::updateManualBookmark(NvAddress address, QString nickname,
         plankSignedInUser.clear();
         plankTopologyVersion = 0;
         plankFeatureFlags = 0;
+        plankEncodingModes.clear();
         displayModes.clear();
         serverCodecModeSupport = 0;
         appVersion.clear();
@@ -377,6 +378,16 @@ NvComputer::NvComputer(NvHTTP& http, QString serverInfo)
             NvHTTP::getXmlString(serverInfo, "PlankTopologyVersion").toInt();
     this->plankFeatureFlags =
             NvHTTP::getXmlString(serverInfo, "PlankFeatureFlags").toInt();
+    const QString advertisedEncodingModes =
+            NvHTTP::getXmlString(serverInfo, "PlankEncodingModes");
+    for (const QString& mode : advertisedEncodingModes.split(
+             QLatin1Char(','), Qt::SkipEmptyParts)) {
+        const QString trimmedMode = mode.trimmed();
+        if (!trimmedMode.isEmpty() &&
+                !this->plankEncodingModes.contains(trimmedMode)) {
+            this->plankEncodingModes.append(trimmedMode);
+        }
+    }
     this->authorizationState = NvHTTP::getXmlString(serverInfo, "PairStatus") == "1" ?
                 AS_AUTHORIZED : AS_UNAUTHORIZED;
     this->currentGameId = NvHTTP::getCurrentGame(serverInfo);
@@ -668,6 +679,7 @@ bool NvComputer::update(const NvComputer& that, NvAddress expectedAddress)
     ASSIGN_IF_CHANGED(plankSignedInUser);
     ASSIGN_IF_CHANGED(plankTopologyVersion);
     ASSIGN_IF_CHANGED(plankFeatureFlags);
+    ASSIGN_IF_CHANGED(plankEncodingModes);
     if (applyDerivedHostLayout()) {
         changed = true;
     }

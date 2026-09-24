@@ -444,7 +444,9 @@ ApplicationWindow {
                     StreamingPreferences.plankDefaultProfileBitratesKbps()
             applyProfileBitrate()
             standardButton(Dialog.Ok).enabled = Qt.binding(function() {
-                return addressText.text.trim() !== "" && nicknameText.text.trim() !== ""
+                return addressText.text.trim() !== "" &&
+                       nicknameText.text.trim() !== "" &&
+                       addEncodingProfile.hasChoices
             })
         }
 
@@ -457,7 +459,8 @@ ApplicationWindow {
             addVirtualMode2.currentIndex = 1
             addScalingChoice.currentIndex = 1
             addCaptureSource.selectCaptureSource(0)
-            addEncodingProfile.currentIndex = 6
+            addEncodingProfile.selectVideoProfile(
+                        StreamingPreferences.PLANK_PROFILE_NVENC_HEVC_8BIT_420)
             profileBitratesKbps = []
         }
 
@@ -537,7 +540,12 @@ ApplicationWindow {
                 probingEnabled: addPcDialog.visible
                 onCaptureSourceChanged: {
                     addHostLayout.currentIndex = 0
-                    addEncodingProfile.currentIndex = captureSource === 0 ? 6 : 0
+                    var preferredProfile = captureSource === StreamingPreferences.PLANK_CAPTURE_NVFBC_8BIT ?
+                                StreamingPreferences.PLANK_PROFILE_NVENC_HEVC_8BIT_420 :
+                                captureSource === StreamingPreferences.PLANK_CAPTURE_SCREENCAPTUREKIT ?
+                                    StreamingPreferences.PLANK_PROFILE_APPLE_HEVC_10BIT_420 :
+                                    StreamingPreferences.PLANK_PROFILE_H264_10BIT_444
+                    addEncodingProfile.selectVideoProfile(preferredProfile)
                     Qt.callLater(addPcDialog.applyProfileBitrate)
                 }
             }
@@ -547,78 +555,23 @@ ApplicationWindow {
                 font.bold: true
             }
 
-            PlankComboBox {
+            PlankEncodingProfileBox {
                 id: addEncodingProfile
                 Layout.fillWidth: true
-                textRole: "text"
-                currentIndex: 6
-                model: addCaptureSource.captureSource === 2 ? addAppleEncodingProfileModel :
-                       addCaptureSource.captureSource === 0 ?
-                           addNvfbcEncodingProfileModel : addNativeEncodingProfileModel
+                captureSource: addCaptureSource.captureSource
+                supportedModes: addCaptureSource.hostEncodingModes
                 onActivated: {
                     addPcDialog.applyProfileBitrate()
                     addPcDialog.ensureVirtualModesCompatible()
                 }
             }
 
-            ListModel {
-                id: addNvfbcEncodingProfileModel
-                ListElement {
-                    text: qsTr("H.264 8-bit 4:2:2")
-                    val: StreamingPreferences.PLANK_PROFILE_H264_8BIT_422
-                }
-                ListElement {
-                    text: qsTr("H.264 8-bit 4:4:4 (identity GBR)")
-                    val: StreamingPreferences.PLANK_PROFILE_H264_8BIT_444
-                }
-                ListElement {
-                    text: qsTr("H.264 10-bit 4:2:2")
-                    val: StreamingPreferences.PLANK_PROFILE_H264_10BIT_422
-                }
-                ListElement {
-                    text: qsTr("H.264 10-bit 4:4:4 (identity GBR)")
-                    val: StreamingPreferences.PLANK_PROFILE_H264_10BIT_444
-                }
-                ListElement {
-                    text: qsTr("H.264 8-bit 4:4:4 (identity GBR) — NVENC")
-                    val: StreamingPreferences.PLANK_PROFILE_NVENC_H264_8BIT_444
-                }
-                ListElement {
-                    text: qsTr("H.265 8-bit 4:2:0 — NVENC (best for limited bandwidth)")
-                    val: StreamingPreferences.PLANK_PROFILE_NVENC_HEVC_8BIT_420
-                }
-                ListElement {
-                    text: qsTr("H.265 8-bit 4:4:4 (identity GBR) — NVENC")
-                    val: StreamingPreferences.PLANK_PROFILE_NVENC_HEVC_8BIT_444
-                }
-                ListElement {
-                    text: qsTr("H.265 10-bit 4:4:4 (identity GBR) — NVENC")
-                    val: StreamingPreferences.PLANK_PROFILE_NVENC_HEVC_10BIT_444
-                }
-            }
-
-            ListModel {
-                id: addAppleEncodingProfileModel
-                ListElement {
-                    text: qsTr("HEVC 10-bit 4:2:0 — Apple VideoToolbox (Preview)")
-                    val: StreamingPreferences.PLANK_PROFILE_APPLE_HEVC_10BIT_420
-                }
-                ListElement {
-                    text: qsTr("HEVC 10-bit 4:4:4 — Apple VideoToolbox (Preview)")
-                    val: StreamingPreferences.PLANK_PROFILE_APPLE_HEVC_10BIT_444
-                }
-            }
-
-            ListModel {
-                id: addNativeEncodingProfileModel
-                ListElement {
-                    text: qsTr("H.264 10-bit 4:4:4 (identity GBR) — x264")
-                    val: StreamingPreferences.PLANK_PROFILE_H264_10BIT_444
-                }
-                ListElement {
-                    text: qsTr("H.265 10-bit 4:4:4 (identity GBR) — NVENC")
-                    val: StreamingPreferences.PLANK_PROFILE_NVENC_HEVC_10BIT_444
-                }
+            Label {
+                Layout.fillWidth: true
+                visible: !addEncodingProfile.hasChoices
+                text: qsTr("This workstation did not advertise an encoding profile for the selected capture source.")
+                wrapMode: Text.Wrap
+                color: theme.danger
             }
 
             Label {

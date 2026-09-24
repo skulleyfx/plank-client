@@ -195,6 +195,14 @@ int ComputerModel::plankCaptureSource(int computerIndex) const
     return computer->plankCaptureSource;
 }
 
+QStringList ComputerModel::plankEncodingModes(int computerIndex) const
+{
+    Q_ASSERT(computerIndex >= 0 && computerIndex < m_Computers.count());
+    NvComputer* computer = m_Computers[computerIndex];
+    QReadLocker lock(&computer->lock);
+    return computer->plankEncodingModes;
+}
+
 QVariantList ComputerModel::plankProfileBitratesKbps(
         int computerIndex) const
 {
