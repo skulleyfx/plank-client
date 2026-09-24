@@ -267,7 +267,8 @@ public:
 signals:
     void hostPlatformDetected(int requestId, QString address, int platform);
     void hostCapabilitiesDetected(int requestId, QString address, int platform,
-                                  QStringList encodingModes);
+                                  QStringList encodingModes,
+                                  QStringList captureSources);
     void computerStateChanged(NvComputer* computer);
 
     void authenticationCompleted(NvComputer* computer, QString error);

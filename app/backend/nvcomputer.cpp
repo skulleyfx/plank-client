@@ -101,6 +101,7 @@ bool NvComputer::updateManualBookmark(NvAddress address, QString nickname,
         plankTopologyVersion = 0;
         plankFeatureFlags = 0;
         plankEncodingModes.clear();
+        plankCaptureSources.clear();
         displayModes.clear();
         serverCodecModeSupport = 0;
         appVersion.clear();
@@ -172,7 +173,7 @@ NvComputer::NvComputer(QSettings& settings)
             static_cast<int>(StreamingPreferences::PLANK_CAPTURE_NVFBC_8BIT),
             settings.value(SER_CAPTURESOURCE,
                            static_cast<int>(StreamingPreferences::PLANK_CAPTURE_NVFBC_8BIT)).toInt(),
-            static_cast<int>(StreamingPreferences::PLANK_CAPTURE_SCREENCAPTUREKIT));
+            static_cast<int>(StreamingPreferences::PLANK_CAPTURE_WGC));
     if (!StreamingPreferences::isPlankProfileValidForCaptureSource(
                 this->plankVideoProfile,
                 this->plankCaptureSource)) {
@@ -386,6 +387,16 @@ NvComputer::NvComputer(NvHTTP& http, QString serverInfo)
         if (!trimmedMode.isEmpty() &&
                 !this->plankEncodingModes.contains(trimmedMode)) {
             this->plankEncodingModes.append(trimmedMode);
+        }
+    }
+    const QString advertisedCaptureSources =
+            NvHTTP::getXmlString(serverInfo, "PlankCaptureSources");
+    for (const QString& source : advertisedCaptureSources.split(
+             QLatin1Char(','), Qt::SkipEmptyParts)) {
+        const QString trimmedSource = source.trimmed();
+        if (!trimmedSource.isEmpty() &&
+                !this->plankCaptureSources.contains(trimmedSource)) {
+            this->plankCaptureSources.append(trimmedSource);
         }
     }
     this->authorizationState = NvHTTP::getXmlString(serverInfo, "PairStatus") == "1" ?
@@ -680,6 +691,7 @@ bool NvComputer::update(const NvComputer& that, NvAddress expectedAddress)
     ASSIGN_IF_CHANGED(plankTopologyVersion);
     ASSIGN_IF_CHANGED(plankFeatureFlags);
     ASSIGN_IF_CHANGED(plankEncodingModes);
+    ASSIGN_IF_CHANGED(plankCaptureSources);
     if (applyDerivedHostLayout()) {
         changed = true;
     }

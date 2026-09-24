@@ -126,6 +126,7 @@ public:
     int plankTopologyVersion = 0;
     int plankFeatureFlags = 0;
     QStringList plankEncodingModes;
+    QStringList plankCaptureSources;
     NvOutputTopology outputTopology;
 
     // Persisted traits

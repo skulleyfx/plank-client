@@ -703,7 +703,7 @@ Session::Session(NvComputer* computer, NvApp& app,
       m_PlankCaptureSource(static_cast<StreamingPreferences::PlankCaptureSource>(
               qBound(static_cast<int>(StreamingPreferences::PLANK_CAPTURE_NVFBC_8BIT),
                      computer->plankCaptureSource,
-                     static_cast<int>(StreamingPreferences::PLANK_CAPTURE_SCREENCAPTUREKIT)))),
+                     static_cast<int>(StreamingPreferences::PLANK_CAPTURE_WGC)))),
       m_PlankBitrateKbps(
               StreamingPreferences::plankBitrateForProfile(
                   computer->plankProfileBitratesKbps,
@@ -1618,7 +1618,8 @@ bool Session::initialize()
         emit displayLaunchError(error);
         return false;
     }
-    if (m_PlankCaptureSource == StreamingPreferences::PLANK_CAPTURE_NVFBC_8BIT &&
+    if (StreamingPreferences::isPlankEightBitDesktopCaptureSource(
+                m_PlankCaptureSource) &&
             m_PlankVideoProfile ==
                 StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_10BIT_444 &&
             (m_Computer->plankFeatureFlags &
@@ -2904,7 +2905,11 @@ bool Session::startConnectionAsync(bool reconnecting,
                 m_PlankCaptureSource == StreamingPreferences::PLANK_CAPTURE_SCREENCAPTUREKIT ?
                     QStringLiteral("screencapturekit") :
                 m_PlankCaptureSource == StreamingPreferences::PLANK_CAPTURE_X11_NATIVE10 ?
-                    QStringLiteral("x11-native10") : QStringLiteral("nvfbc");
+                    QStringLiteral("x11-native10") :
+                m_PlankCaptureSource == StreamingPreferences::PLANK_CAPTURE_DDUP ?
+                    QStringLiteral("ddup") :
+                m_PlankCaptureSource == StreamingPreferences::PLANK_CAPTURE_WGC ?
+                    QStringLiteral("wgc") : QStringLiteral("nvfbc");
         const QString encoderBackend =
                 StreamingPreferences::isPlankAppleProfile(m_PlankVideoProfile) ?
                     QStringLiteral("videotoolbox") :

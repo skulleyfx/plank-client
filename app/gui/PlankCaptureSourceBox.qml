@@ -11,6 +11,7 @@ PlankComboBox {
     property bool probingEnabled: false
     property int hostPlatform: 0
     property var hostEncodingModes: []
+    property var hostCaptureSources: []
     property int captureSource: StreamingPreferences.PLANK_CAPTURE_NVFBC_8BIT
     property int requestId: 0
     property bool rebuilding: false
@@ -25,12 +26,35 @@ PlankComboBox {
         rebuilding = true
         var desired = captureSource
         choices.clear()
-        if (hostPlatform !== 2) {
-            choices.append({text: qsTr("NvFBC — 8-bit source"), val: StreamingPreferences.PLANK_CAPTURE_NVFBC_8BIT})
-            choices.append({text: qsTr("Native X11/XShm — 10-bit (Experimental)"), val: StreamingPreferences.PLANK_CAPTURE_X11_NATIVE10})
+        if (hostCaptureSources.length > 0) {
+            var hasWindowsBackends = hostCaptureSources.indexOf("ddup") >= 0 ||
+                                     hostCaptureSources.indexOf("wgc") >= 0
+            if (hostCaptureSources.indexOf("nvfbc") >= 0) {
+                choices.append({text: hasWindowsBackends ?
+                                    qsTr("Automatic — DXGI with WGC fallback") :
+                                    qsTr("NvFBC — 8-bit source"),
+                                val: StreamingPreferences.PLANK_CAPTURE_NVFBC_8BIT})
+            }
+            if (hostCaptureSources.indexOf("ddup") >= 0)
+                choices.append({text: qsTr("DXGI Desktop Duplication — lowest latency"), val: StreamingPreferences.PLANK_CAPTURE_DDUP})
+            if (hostCaptureSources.indexOf("wgc") >= 0)
+                choices.append({text: qsTr("Windows Graphics Capture — compatibility"), val: StreamingPreferences.PLANK_CAPTURE_WGC})
+            if (hostCaptureSources.indexOf("x11-native10") >= 0)
+                choices.append({text: qsTr("Native X11/XShm — 10-bit (Experimental)"), val: StreamingPreferences.PLANK_CAPTURE_X11_NATIVE10})
+            if (hostCaptureSources.indexOf("screencapturekit") >= 0)
+                choices.append({text: qsTr("ScreenCaptureKit — macOS (Experimental)"), val: StreamingPreferences.PLANK_CAPTURE_SCREENCAPTUREKIT})
+        } else {
+            if (hostPlatform !== 2) {
+                choices.append({text: qsTr("NvFBC — 8-bit source"), val: StreamingPreferences.PLANK_CAPTURE_NVFBC_8BIT})
+                choices.append({text: qsTr("Native X11/XShm — 10-bit (Experimental)"), val: StreamingPreferences.PLANK_CAPTURE_X11_NATIVE10})
+            }
+            if (hostPlatform !== 1) {
+                choices.append({text: qsTr("ScreenCaptureKit — macOS (Experimental)"), val: StreamingPreferences.PLANK_CAPTURE_SCREENCAPTUREKIT})
+            }
         }
-        if (hostPlatform !== 1) {
-            choices.append({text: qsTr("ScreenCaptureKit — macOS (Experimental)"), val: StreamingPreferences.PLANK_CAPTURE_SCREENCAPTUREKIT})
+        if (choices.count === 0) {
+            choices.append({text: qsTr("Automatic — host-selected capture"),
+                            val: StreamingPreferences.PLANK_CAPTURE_NVFBC_8BIT})
         }
         var selection = 0
         for (var i = 0; i < choices.count; ++i) if (choices.get(i).val === desired) selection = i
@@ -42,6 +66,7 @@ PlankComboBox {
         requestId = 0
         hostPlatform = 0
         hostEncodingModes = []
+        hostCaptureSources = []
         rebuild()
         probeTimer.stop()
         if (probingEnabled && hostAddress.trim() !== "") probeTimer.restart()
@@ -69,11 +94,12 @@ PlankComboBox {
             control.hostPlatform = platform
             control.rebuild()
         }
-        function onHostCapabilitiesDetected(id, address, platform, encodingModes) {
+        function onHostCapabilitiesDetected(id, address, platform, encodingModes, captureSources) {
             if (!control.probingEnabled || id !== control.requestId || address !== control.hostAddress.trim()) return
             control.requestId = 0
             control.hostPlatform = platform
             control.hostEncodingModes = encodingModes
+            control.hostCaptureSources = captureSources
             control.rebuild()
         }
     }

@@ -527,6 +527,7 @@ CenteredGridView {
             editScalingChoice.currentIndex = scalingIndex
             hostDisplayPolicy = computerModel.plankHostDisplayPolicy(pcIndex)
             supportedEncodingModes = computerModel.plankEncodingModes(pcIndex)
+            editCaptureSource.hostCaptureSources = computerModel.plankCaptureSources(pcIndex)
             editCaptureSource.selectCaptureSource(originalCaptureSource)
             editHostLayout.currentIndex = hostLayoutIndex
             editVirtualMode1.currentIndex = virtualMode1Index
@@ -606,7 +607,9 @@ CenteredGridView {
                 probingEnabled: editBookmarkDialog.visible
                 onCaptureSourceChanged: {
                     editHostLayout.currentIndex = 0
-                    var preferredProfile = captureSource === StreamingPreferences.PLANK_CAPTURE_NVFBC_8BIT ?
+                    var preferredProfile = (captureSource === StreamingPreferences.PLANK_CAPTURE_NVFBC_8BIT ||
+                                            captureSource === StreamingPreferences.PLANK_CAPTURE_DDUP ||
+                                            captureSource === StreamingPreferences.PLANK_CAPTURE_WGC) ?
                                 StreamingPreferences.PLANK_PROFILE_NVENC_HEVC_8BIT_420 :
                                 captureSource === StreamingPreferences.PLANK_CAPTURE_SCREENCAPTUREKIT ?
                                     StreamingPreferences.PLANK_PROFILE_APPLE_HEVC_10BIT_420 :

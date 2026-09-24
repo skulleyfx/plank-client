@@ -46,6 +46,8 @@ public:
         PLANK_CAPTURE_NVFBC_8BIT,
         PLANK_CAPTURE_X11_NATIVE10,
         PLANK_CAPTURE_SCREENCAPTUREKIT,
+        PLANK_CAPTURE_DDUP,
+        PLANK_CAPTURE_WGC,
     };
     Q_ENUM(PlankCaptureSource)
 
@@ -73,7 +75,7 @@ public:
     {
         if (!isPlankVideoProfileValid(profile) ||
                 captureSource < PLANK_CAPTURE_NVFBC_8BIT ||
-                captureSource > PLANK_CAPTURE_SCREENCAPTUREKIT) {
+                captureSource > PLANK_CAPTURE_WGC) {
             return false;
         }
 
@@ -89,6 +91,13 @@ public:
         }
 
         return true;
+    }
+
+    static bool isPlankEightBitDesktopCaptureSource(int captureSource)
+    {
+        return captureSource == PLANK_CAPTURE_NVFBC_8BIT ||
+               captureSource == PLANK_CAPTURE_DDUP ||
+               captureSource == PLANK_CAPTURE_WGC;
     }
 
     static bool isPlankNvencProfile(int profile)

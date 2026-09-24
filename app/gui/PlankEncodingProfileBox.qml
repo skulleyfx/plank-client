@@ -94,7 +94,10 @@ PlankComboBox {
                 break
             }
         }
-        if (selected < 0 && captureSource === StreamingPreferences.PLANK_CAPTURE_NVFBC_8BIT) {
+        if (selected < 0 &&
+                (captureSource === StreamingPreferences.PLANK_CAPTURE_NVFBC_8BIT ||
+                 captureSource === StreamingPreferences.PLANK_CAPTURE_DDUP ||
+                 captureSource === StreamingPreferences.PLANK_CAPTURE_WGC)) {
             for (var fallback = 0; fallback < choices.count; ++fallback) {
                 if (choices.get(fallback).val ===
                         StreamingPreferences.PLANK_PROFILE_NVENC_HEVC_8BIT_420) {

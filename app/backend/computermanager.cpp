@@ -898,6 +898,7 @@ public:
     void run() override {
         int platform = 0;
         QStringList encodingModes;
+        QStringList captureSources;
         try {
             NvHTTP http(m_Address);
             const QString info = http.getServerInfo(NvHTTP::NVLL_NONE, true);
@@ -916,14 +917,25 @@ public:
                         encodingModes.append(trimmedMode);
                     }
                 }
+                const QString advertisedSources =
+                        NvHTTP::getXmlString(info, "PlankCaptureSources");
+                for (const QString& source : advertisedSources.split(
+                         QLatin1Char(','), Qt::SkipEmptyParts)) {
+                    const QString trimmedSource = source.trimmed();
+                    if (!trimmedSource.isEmpty() &&
+                            !captureSources.contains(trimmedSource)) {
+                        captureSources.append(trimmedSource);
+                    }
+                }
             }
         } catch (const GfeHttpResponseException&) {
         } catch (const QtNetworkReplyException&) {
         }
-        emit completed(platform, encodingModes);
+        emit completed(platform, encodingModes, captureSources);
     }
 signals:
-    void completed(int platform, QStringList encodingModes);
+    void completed(int platform, QStringList encodingModes,
+                   QStringList captureSources);
 private:
     NvAddress m_Address;
 };
@@ -941,10 +953,13 @@ int ComputerManager::probeHostPlatform(QString address)
     const int requestId = ++m_HostPlatformProbeSequence;
     auto* task = new HostPlatformProbe(parsed);
     connect(task, &HostPlatformProbe::completed, this,
-            [this, requestId, address](int platform, const QStringList& encodingModes) {
+            [this, requestId, address](int platform,
+                                      const QStringList& encodingModes,
+                                      const QStringList& captureSources) {
         m_HostPlatformProbePending = false;
         emit hostPlatformDetected(requestId, address, platform);
-        emit hostCapabilitiesDetected(requestId, address, platform, encodingModes);
+        emit hostCapabilitiesDetected(requestId, address, platform,
+                                      encodingModes, captureSources);
     }, Qt::QueuedConnection);
     QThreadPool::globalInstance()->start(task);
     return requestId;
