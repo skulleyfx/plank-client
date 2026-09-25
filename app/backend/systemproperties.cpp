@@ -1,6 +1,7 @@
 #include "systemproperties.h"
 #include "utils.h"
 
+#include <QCoreApplication>
 #include <QGuiApplication>
 #include <QLibraryInfo>
 
@@ -18,7 +19,11 @@
 
 SystemProperties::SystemProperties()
 {
-    plankVersionString = QString::fromLatin1(PLANK_VERSION_STR);
+    // Read the value established by main() instead of compiling a second copy
+    // of the version into this object file. Incremental Windows release builds
+    // can otherwise update the executable resource and main.cpp while leaving
+    // this QML-facing object at the previous revision.
+    plankVersionString = QCoreApplication::applicationVersion();
     hasDesktopEnvironment = WMUtils::isRunningDesktopEnvironment();
     isRunningWayland = WMUtils::isRunningWayland();
     isRunningXWayland = isRunningWayland && QGuiApplication::platformName() == "xcb";

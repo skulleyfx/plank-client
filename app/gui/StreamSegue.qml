@@ -76,6 +76,14 @@ Item {
     function sessionFinished()
     {
         activeSessionTakeoverDialog.close()
+        if (session.restartForDisplayChange) {
+            stageText = qsTr("Switching displays...")
+            stageSpinner.visible = true
+            stageSpinner.running = true
+            stageLabel.visible = true
+            window.visible = true
+            return
+        }
         if (quitAfter) {
             if (streamSegueErrorDialog.text) {
                 // Quit when the error dialog is acknowledged
@@ -105,10 +113,31 @@ Item {
 
     function sessionReadyForDeletion()
     {
+        if (session.restartForDisplayChange) {
+            var replacement = session.createDisplayChangeRestartSession()
+            session = replacement
+            connectSessionSignals()
+            gc()
+            Qt.callLater(function() { session.exec(Window.window) })
+            return
+        }
         // Garbage collect the Session object since it's pretty heavyweight
         // and keeps other libraries (like SDL_TTF) around until it is deleted.
         session = null
         gc()
+    }
+
+    function connectSessionSignals()
+    {
+        session.stageStarting.connect(stageStarting)
+        session.stageFailed.connect(stageFailed)
+        session.connectionStarted.connect(connectionStarted)
+        session.sessionCleanupWaitChanged.connect(sessionCleanupWaitChanged)
+        session.activeSessionTakeoverRequested.connect(activeSessionTakeoverRequested)
+        session.displayLaunchError.connect(displayLaunchError)
+        session.displayLaunchWarning.connect(displayLaunchWarning)
+        session.sessionFinished.connect(sessionFinished)
+        session.readyForDeletion.connect(sessionReadyForDeletion)
     }
 
     StackView.onDeactivating: {
@@ -121,15 +150,7 @@ Item {
         toolBar.visible = false
 
         // Hook up our signals
-        session.stageStarting.connect(stageStarting)
-        session.stageFailed.connect(stageFailed)
-        session.connectionStarted.connect(connectionStarted)
-        session.sessionCleanupWaitChanged.connect(sessionCleanupWaitChanged)
-        session.activeSessionTakeoverRequested.connect(activeSessionTakeoverRequested)
-        session.displayLaunchError.connect(displayLaunchError)
-        session.displayLaunchWarning.connect(displayLaunchWarning)
-        session.sessionFinished.connect(sessionFinished)
-        session.readyForDeletion.connect(sessionReadyForDeletion)
+        connectSessionSignals()
 
         // Kick off the stream
         spinnerTimer.start()

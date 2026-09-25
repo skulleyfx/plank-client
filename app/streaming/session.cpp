@@ -79,6 +79,41 @@
 #include <utility>
 #include <vector>
 
+#ifdef Q_OS_WIN32
+static void groupPlankSecondaryWindow(SDL_Window* primary,
+                                      SDL_Window* secondary)
+{
+    const auto hwndForWindow = [](SDL_Window* window) -> HWND {
+        const SDL_PropertiesID properties = SDL_GetWindowProperties(window);
+        return properties != 0 ?
+                    reinterpret_cast<HWND>(SDL_GetPointerProperty(
+                        properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr)) :
+                    nullptr;
+    };
+
+    HWND primaryHwnd = hwndForWindow(primary);
+    HWND secondaryHwnd = hwndForWindow(secondary);
+    if (primaryHwnd == nullptr || secondaryHwnd == nullptr) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Unable to group PLANK presentation windows in the Windows taskbar");
+        return;
+    }
+
+    // Make the extra presentation surface an owned tool window. Windows then
+    // exposes one taskbar item for the session and minimizes/restores both
+    // fullscreen surfaces when that item is clicked.
+    SetWindowLongPtrW(secondaryHwnd, GWLP_HWNDPARENT,
+                      reinterpret_cast<LONG_PTR>(primaryHwnd));
+    LONG_PTR extendedStyle = GetWindowLongPtrW(secondaryHwnd, GWL_EXSTYLE);
+    extendedStyle &= ~static_cast<LONG_PTR>(WS_EX_APPWINDOW);
+    extendedStyle |= WS_EX_TOOLWINDOW;
+    SetWindowLongPtrW(secondaryHwnd, GWL_EXSTYLE, extendedStyle);
+    SetWindowPos(secondaryHwnd, nullptr, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE |
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+}
+#endif
+
 CONNECTION_LISTENER_CALLBACKS Session::k_ConnCallbacks = {
     Session::clStageStarting,
     nullptr,
@@ -3424,6 +3459,37 @@ void Session::respondToActiveSessionTakeover(bool takeOver)
     }
 }
 
+Session* Session::createDisplayChangeRestartSession()
+{
+    if (!m_RestartForDisplayChange) {
+        return nullptr;
+    }
+    Session* replacement = new Session(
+                m_Computer, m_App, m_Preferences, m_ComputerManager);
+    replacement->m_PlankUsername = std::move(m_PlankUsername);
+    replacement->m_PlankPassword = std::move(m_PlankPassword);
+    replacement->m_CanReconnect.store(
+                !replacement->m_PlankUsername.isEmpty() &&
+                !replacement->m_PlankPassword.isEmpty());
+    m_CanReconnect.store(false);
+    return replacement;
+}
+
+static QString plankVideoFormatLabel(int videoFormat)
+{
+    const QString codec = (videoFormat & VIDEO_FORMAT_MASK_AV1) ?
+                QStringLiteral("AV1") :
+                (videoFormat & VIDEO_FORMAT_MASK_H265) ?
+                    QStringLiteral("H.265") : QStringLiteral("H.264");
+    const QString chroma = (videoFormat & VIDEO_FORMAT_MASK_YUV444) ?
+                QStringLiteral("444") :
+                (videoFormat & VIDEO_FORMAT_MASK_YUV422) ?
+                    QStringLiteral("422") : QStringLiteral("420");
+    const QString depth = (videoFormat & VIDEO_FORMAT_MASK_10BIT) ?
+                QStringLiteral(" 10b") : QString();
+    return codec + QStringLiteral(" ") + chroma + depth;
+}
+
 /**
  * @brief Carry out a toolbar action that is the same wherever it is clicked.
  *
@@ -3454,17 +3520,15 @@ void Session::applyToolbarAction(PlankToolbar::Action action)
                     wantTwo ? "Switching to two screens..."
                             : "Switching to one screen...",
                     false);
-        // Apply it now by reconnecting, rather than asking the artist to
-        // disconnect and connect again by hand. The reconnect re-reads the
-        // preference and negotiates the new screen count. On the two-window
-        // layout a status message alone can go unseen, so the button appeared
-        // to do nothing at all.
-        {
-            SDL_Event reconnectEvent = {};
-            reconnectEvent.type = SDL_EVENT_USER;
-            reconnectEvent.user.code = SDL_CODE_PLANK_RECONNECT;
-            SDL_PushEvent(&reconnectEvent);
-        }
+        // A one/two-screen change alters the SDL window set, decoder canvas,
+        // input topology, and host capture layout. The lightweight transport
+        // reconnect deliberately retains those objects, so it cannot apply
+        // this change. End this Session cleanly and let StreamSegue replace it
+        // after deferred connection cleanup completes.
+        m_RestartForDisplayChange = true;
+        SDL_Event quitEvent = {};
+        quitEvent.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&quitEvent);
         break;
     }
     case PlankToolbar::Action::ToggleFullscreen:
@@ -4131,6 +4195,9 @@ void Session::execInternal()
                             new DeferredSessionCleanupTask(this));
                 return;
             }
+#ifdef Q_OS_WIN32
+            groupPlankSecondaryWindow(m_Window, secondary);
+#endif
             SDL_SetWindowFullscreenMode(secondary, nullptr);
             SDL_SetWindowFullscreen(secondary, true);
             paintStartupSplash(secondary);
@@ -4318,7 +4385,8 @@ void Session::execInternal()
         if (m_Computer->plankAuthentication && !m_PlankToolbar) {
             m_PlankToolbar.reset(new PlankToolbar(
                         m_Window, m_OverlayManager, *m_InputHandler,
-                        *m_Preferences, m_PlankBitrateKbps));
+                        *m_Preferences, m_PlankBitrateKbps,
+                        plankVideoFormatLabel(m_ActiveVideoFormat)));
         }
     };
     if (!presentationMappingDeferred) {
@@ -5088,7 +5156,9 @@ DispatchDeferredCleanup:
     // before allowing the UI to continue execution.
     delete m_InputHandler;
     m_InputHandler = nullptr;
-    clearPlankReconnectCredentials();
+    if (!m_RestartForDisplayChange) {
+        clearPlankReconnectCredentials();
+    }
 
 #ifdef PLANK_TRANSPORT
     // Native media threads call directly into the active decoder and audio

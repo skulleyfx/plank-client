@@ -138,6 +138,15 @@ public:
 
     Q_INVOKABLE void respondToActiveSessionTakeover(bool takeOver);
 
+    Q_PROPERTY(bool restartForDisplayChange READ restartForDisplayChange)
+
+    bool restartForDisplayChange() const
+    {
+        return m_RestartForDisplayChange;
+    }
+
+    Q_INVOKABLE Session* createDisplayChangeRestartSession();
+
     static
     void getDecoderInfo(SDL_Window* window,
                         bool& isHardwareAccelerated, bool& isFullScreenOnly,
@@ -413,6 +422,7 @@ private:
     std::atomic_bool m_WaitingForSessionCleanup;
     std::atomic_bool m_WaitingForActiveSessionTakeoverDecision {false};
     std::atomic_int m_ActiveSessionTakeoverDecision {0};
+    bool m_RestartForDisplayChange = false;
     QString m_PlankUsername;
     QString m_PlankPassword;
     QString m_ResolvedScalingMode;

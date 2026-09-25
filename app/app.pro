@@ -69,12 +69,6 @@ contains(CONFIG, plank-transport) {
         LIBS += $$PLANK_TRANSPORT_LIBRARY \
                 ws2_32.lib userenv.lib ntdll.lib bcrypt.lib advapi32.lib secur32.lib
 
-        # Qt's win32-msvc mkspec enables /guard:ehcont (EH Continuation
-        # metadata). rustc's MSVC target does not emit it, so the linker
-        # refuses to mix the objects. /force:guardehcont links anyway; the
-        # Rust modules simply lack EHCONT hardening, the rest of the app
-        # keeps it. Revisit if rustc gains /guard:ehcont support.
-        QMAKE_LFLAGS += /force:guardehcont
     }
     else {
         LIBS += $$PLANK_TRANSPORT_LIBRARY -ldl -lpthread -lm
@@ -87,6 +81,14 @@ contains(CONFIG, plank-transport) {
 TARGET = plank-client
 
 include(../globaldefs.pri)
+
+win32:contains(CONFIG, plank-transport) {
+    # Rust's MSVC target does not emit EH continuation metadata. Do not ask
+    # the linker to enforce EHCONT for a mixed C++/Rust image. CFG and CET
+    # remain enabled, and the C++ sources are still compiled with EHCONT.
+    QMAKE_LFLAGS -= -guard:ehcont
+    QMAKE_LFLAGS -= /guard:ehcont
+}
 
 # Precompile QML files to avoid writing qmlcache on portable versions.
 # Since this binds the app against the Qt runtime version, we will only

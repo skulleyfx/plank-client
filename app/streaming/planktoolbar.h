@@ -32,7 +32,8 @@ public:
                           Overlay::OverlayManager& overlayManager,
                           SdlInputHandler& inputHandler,
                           StreamingPreferences& preferences,
-                          int initialBitrateKbps);
+                          int initialBitrateKbps,
+                          const QString& codecLabel);
     ~PlankToolbar();
 
     void setRenderedStats(float fps, float videoMbps, float packetLossPercent);
@@ -152,6 +153,7 @@ private:
     float m_PacketLossPercent;
     int m_NetworkLatencyMs;
     int m_LastDrawnNetworkLatencyMs;
+    QString m_CodecLabel;
     bool m_TwoScreensAvailable {};
     bool m_TwoScreensInUse {};
     Uint64 m_LastStayLogTime;

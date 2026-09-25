@@ -23,8 +23,8 @@
 #endif
 
 namespace {
-// Widened by 56 px for the latency field.
-constexpr int ToolbarPreferredWidth = 595;
+// Wide enough for latency, codec/profile, bitrate control, and window actions.
+constexpr int ToolbarPreferredWidth = 690;
 constexpr int ToolbarHeight = 39;
 constexpr int EdgeRevealHeight = 3;
 constexpr Uint32 EdgeActivationDelayMs = 1000;
@@ -75,7 +75,8 @@ PlankToolbar::PlankToolbar(
         Overlay::OverlayManager& overlayManager,
         SdlInputHandler& inputHandler,
         StreamingPreferences& preferences,
-        int initialBitrateKbps)
+        int initialBitrateKbps,
+        const QString& codecLabel)
     : m_Window(window),
       m_OverlayManager(overlayManager),
       m_InputHandler(inputHandler),
@@ -124,6 +125,7 @@ PlankToolbar::PlankToolbar(
       m_PacketLossPercent(-1.0f),
       m_NetworkLatencyMs(-1),
       m_LastDrawnNetworkLatencyMs(-2),
+      m_CodecLabel(codecLabel),
       m_LastStayLogTime(0),
       m_LastDrawnFps(-1.0f),
       m_LastDrawnVideoMbps(-1.0f),
@@ -908,11 +910,20 @@ void PlankToolbar::redraw()
                      m_NetworkLatencyMs < 0 ? QString("--") :
                                               QString("%1 ms").arg(m_NetworkLatencyMs));
 
+    painter.setFont(labelFont);
+    painter.setPen(QColor(151, 161, 174));
+    painter.drawText(QRect(285, 5, 96, 12), Qt::AlignLeft | Qt::AlignVCenter,
+                     "Codec");
+    painter.setFont(valueFont);
+    painter.setPen(QColor(246, 248, 250));
+    painter.drawText(QRect(285, 16, 96, 17), Qt::AlignLeft | Qt::AlignVCenter,
+                     m_CodecLabel);
+
     QFont targetFont = labelFont;
     targetFont.setPixelSize(12);
     painter.setFont(targetFont);
     painter.setPen(m_BitrateSupported ? QColor(235, 239, 244) : QColor(135, 143, 153));
-    painter.drawText(QRect(285, 3, 190, 17), Qt::AlignLeft | Qt::AlignVCenter,
+    painter.drawText(QRect(390, 3, 190, 17), Qt::AlignLeft | Qt::AlignVCenter,
                      QString("Encoder target  %1 Mbps").arg(m_BitrateKbps / 1000.0, 0, 'f', 1));
 
     const int trackLeft = sliderLeft() - toolbarLeft();
@@ -1460,7 +1471,7 @@ int PlankToolbar::toolbarLeft() const
 
 int PlankToolbar::sliderLeft() const
 {
-    return toolbarLeft() + 285;
+    return toolbarLeft() + 390;
 }
 
 int PlankToolbar::sliderRight() const
