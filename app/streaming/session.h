@@ -423,6 +423,7 @@ private:
     std::atomic_bool m_WaitingForActiveSessionTakeoverDecision {false};
     std::atomic_int m_ActiveSessionTakeoverDecision {0};
     bool m_RestartForDisplayChange = false;
+    bool m_DisplayChangeRestart = false;
     QString m_PlankUsername;
     QString m_PlankPassword;
     QString m_ResolvedScalingMode;

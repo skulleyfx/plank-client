@@ -2935,6 +2935,37 @@ bool Session::startConnectionAsync(bool reconnecting,
             << "ZeroTier=" << (routeReachability == NvComputer::RI_ZEROTIER);
 
     try {
+        // The token used by the original stream is deliberately consumed after
+        // launch. A replacement Session created for a display-count change must
+        // obtain a new one before it can resume the host Desktop session.
+        if (m_DisplayChangeRestart && m_Computer->plankAuthentication) {
+            if (m_PlankUsername.isEmpty() || m_PlankPassword.isEmpty()) {
+                throw GfeHttpResponseException(
+                            401, "PLANK display restart has no reconnect credentials");
+            }
+
+            NvAddress address;
+            QString resumeTicket;
+            {
+                QReadLocker lock(&m_Computer->lock);
+                address = m_Computer->activeAddress;
+                resumeTicket = m_Computer->plankResumeTicket;
+            }
+
+            NvHTTP authentication(address);
+            const QString token = authentication.authenticate(
+                        m_PlankUsername, m_PlankPassword, nullptr, {},
+                        &resumeTicket);
+            {
+                QWriteLocker lock(&m_Computer->lock);
+                m_Computer->sessionToken = token;
+                m_Computer->plankResumeTicket = resumeTicket;
+                m_Computer->authorizationState = NvComputer::AS_AUTHORIZED;
+            }
+            m_DisplayChangeRestart = false;
+            qInfo() << "PLANK display restart obtained a fresh host token";
+        }
+
         std::unique_ptr<NvHTTP> http = std::make_unique<NvHTTP>(m_Computer);
         const QString captureSource =
                 m_PlankCaptureSource == StreamingPreferences::PLANK_CAPTURE_SCREENCAPTUREKIT ?
@@ -3471,6 +3502,7 @@ Session* Session::createDisplayChangeRestartSession()
     replacement->m_CanReconnect.store(
                 !replacement->m_PlankUsername.isEmpty() &&
                 !replacement->m_PlankPassword.isEmpty());
+    replacement->m_DisplayChangeRestart = true;
     m_CanReconnect.store(false);
     return replacement;
 }
