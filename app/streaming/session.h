@@ -224,6 +224,7 @@ private:
     bool beginPlankReconnect(PlankReconnectState& state);
     void setPlankReconnectStatus(const char* text, bool warning);
     void applyToolbarAction(PlankToolbar::Action action);
+    void restartForScreenLayout(bool twoScreens, bool fullScreen);
 
     bool runPlankReconnect();
 
@@ -423,6 +424,9 @@ private:
     std::atomic_bool m_WaitingForActiveSessionTakeoverDecision {false};
     std::atomic_int m_ActiveSessionTakeoverDecision {0};
     bool m_RestartForDisplayChange = false;
+    // Window mode the replacement session starts in after a screen-layout
+    // restart: -1 = follow preferences, 0 = windowed, 1 = full screen.
+    int m_RestartFullScreen = -1;
     bool m_DisplayChangeRestart = false;
     QString m_PlankUsername;
     QString m_PlankPassword;

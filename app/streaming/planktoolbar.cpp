@@ -32,6 +32,7 @@ constexpr Uint32 AutoHideDelayMs = 5000;
 constexpr Uint32 BitrateSettleDelayMs = 250;
 constexpr Uint32 BitrateAcknowledgementRetryMs = 1000;
 constexpr Uint32 RedrawIntervalMs = 200;
+constexpr Uint32 ModePickerTimeoutMs = 8000;
 constexpr Uint32 ToolbarMoveRedrawIntervalMs = 16;
 constexpr int BitrateMinimumKbps =
         StreamingPreferences::PlankBitrateMinimumKbps;
@@ -292,6 +293,11 @@ PlankToolbar::Action PlankToolbar::update(
         } else {
             hide();
         }
+    }
+
+    if (m_ModePickerOpen && now >= m_ModePickerDeadline &&
+            m_PressedControl == Control::None) {
+        closeModePicker();
     }
 
     if (m_Visible && now >= m_LastRedrawTime + RedrawIntervalMs &&
@@ -641,19 +647,34 @@ PlankToolbar::Action PlankToolbar::handlePointerButton(
                         "PLANK toolbar %s", m_Pinned ? "pinned" : "unpinned");
             redraw();
             break;
-        case Control::Fullscreen: {
-            const bool isFullscreen =
-                    (SDL_GetWindowFlags(m_Window) & SDL_WINDOW_FULLSCREEN) != 0;
-            if (m_TwoScreensAvailable && isFullscreen) {
-                // Full screen already: this click switches between using one
-                // monitor and both.
-                action = Action::ToggleTwoScreens;
+        case Control::Fullscreen:
+            // The monitor button offers full screen, a window, or two
+            // monitors instead of guessing which one the artist meant.
+            if (m_ModePickerOpen) {
+                closeModePicker();
             }
             else {
-                action = Action::ToggleFullscreen;
+                m_ModePickerOpen = true;
+                m_ModePickerDeadline = now + ModePickerTimeoutMs;
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "PLANK toolbar screen picker opened");
+                redraw();
             }
             break;
-        }
+        case Control::ChoiceFullscreen:
+            closeModePicker();
+            action = Action::ShowFullscreen;
+            break;
+        case Control::ChoiceWindowed:
+            closeModePicker();
+            action = Action::ShowWindowed;
+            break;
+        case Control::ChoiceTwoScreens:
+            if (m_TwoScreensAvailable || m_TwoScreensInUse) {
+                closeModePicker();
+                action = Action::ShowTwoScreens;
+            }
+            break;
         case Control::Minimize:
             action = Action::Minimize;
             break;
@@ -698,7 +719,8 @@ bool PlankToolbar::handlePointerWheel(const SDL_MouseWheelEvent& event)
     if (!m_LocalPointerInteraction) {
         beginLocalPointerInteraction();
     }
-    if (!m_BitrateSupported || !sliderContains(mouseX, mouseY)) {
+    if (!m_BitrateSupported || m_ModePickerOpen ||
+            !sliderContains(mouseX, mouseY)) {
         return true;
     }
 
@@ -735,6 +757,7 @@ void PlankToolbar::hide()
 {
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "PLANK toolbar auto-hidden");
     endLocalPointerInteraction();
+    m_ModePickerOpen = false;
     m_Visible = false;
     m_EdgeHoverStartTime = 0;
     m_PointerInside = false;
@@ -950,9 +973,10 @@ void PlankToolbar::redraw()
                                 WindowButtonSize);
     const bool fullscreenHovered = m_LocalPointerInteraction &&
                                    fullscreenContains(m_PointerX, m_PointerY);
-    painter.setPen(QPen(QColor(104, 116, 131), 1));
-    painter.setBrush(fullscreenHovered ? QColor(68, 78, 90, 230) :
-                                        QColor(48, 57, 68, 210));
+    painter.setPen(QPen(m_ModePickerOpen ? QColor(52, 132, 228) :
+                                           QColor(104, 116, 131), 1));
+    painter.setBrush(fullscreenHovered || m_ModePickerOpen ?
+                         QColor(68, 78, 90, 230) : QColor(48, 57, 68, 210));
     painter.drawRoundedRect(fullscreenRect,
                             WindowButtonRadius,
                             WindowButtonRadius);
@@ -960,50 +984,77 @@ void PlankToolbar::redraw()
     const bool isFullscreen =
             (SDL_GetWindowFlags(m_Window) & SDL_WINDOW_FULLSCREEN) != 0;
 
-    if (m_TwoScreensAvailable && isFullscreen) {
-        // One or two little screens, showing what the next click switches to.
-        painter.setPen(QPen(QColor(226, 232, 239), 1.3,
-                            Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-        painter.setBrush(Qt::NoBrush);
-        const qreal screenHeight = 7.0 * WindowGlyphScale;
-        if (m_TwoScreensInUse) {
-            const qreal screenWidth = 5.0 * WindowGlyphScale;
-            const qreal gap = 1.6 * WindowGlyphScale;
-            for (const qreal side : {-1.0, 1.0}) {
-                painter.drawRect(QRectF(fullscreenCenter.x() +
-                                            (side < 0 ? -screenWidth - gap / 2.0 : gap / 2.0),
-                                        fullscreenCenter.y() - screenHeight / 2.0,
-                                        screenWidth, screenHeight));
-            }
-        }
-        else {
-            const qreal screenWidth = 11.0 * WindowGlyphScale;
-            painter.drawRect(QRectF(fullscreenCenter.x() - screenWidth / 2.0,
-                                    fullscreenCenter.y() - screenHeight / 2.0,
-                                    screenWidth, screenHeight));
+    // Monitor glyph: one screen on a stand, or two side by side while the
+    // session spans both monitors.
+    painter.setPen(QPen(QColor(226, 232, 239), 1.3,
+                        Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+    const qreal screenHeight = 7.0 * WindowGlyphScale;
+    const qreal screenTop = fullscreenCenter.y() - screenHeight / 2.0 - 1.0;
+    if (m_TwoScreensInUse) {
+        const qreal screenWidth = 5.0 * WindowGlyphScale;
+        const qreal gap = 1.6 * WindowGlyphScale;
+        for (const qreal side : {-1.0, 1.0}) {
+            painter.drawRect(QRectF(fullscreenCenter.x() +
+                                        (side < 0 ? -screenWidth - gap / 2.0 : gap / 2.0),
+                                    screenTop, screenWidth, screenHeight));
         }
     }
     else {
-    // Four corners point outward when entering fullscreen and inward when the
-    // next click will restore the decorated window.
-    const qreal outer = 6.0 * WindowGlyphScale;
-    const qreal inner = 2.0 * WindowGlyphScale;
-    const qreal cornerDistance = isFullscreen ? inner : outer;
-    const qreal armLength = outer - inner;
-    painter.setPen(QPen(QColor(226, 232, 239), 1.4,
-                        Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    for (const qreal sx : {-1.0, 1.0}) {
-        for (const qreal sy : {-1.0, 1.0}) {
-            const QPointF corner = fullscreenCenter +
-                    QPointF(sx * cornerDistance, sy * cornerDistance);
-            painter.drawLine(corner,
-                             corner + QPointF((isFullscreen ? sx : -sx) *
-                                              armLength, 0));
-            painter.drawLine(corner,
-                             corner + QPointF(0, (isFullscreen ? sy : -sy) *
-                                              armLength));
-        }
+        const qreal screenWidth = 11.0 * WindowGlyphScale;
+        painter.drawRect(QRectF(fullscreenCenter.x() - screenWidth / 2.0,
+                                screenTop, screenWidth, screenHeight));
     }
+    const qreal standTop = screenTop + screenHeight;
+    painter.drawLine(QPointF(fullscreenCenter.x(), standTop),
+                     QPointF(fullscreenCenter.x(), standTop + 2.0));
+    painter.drawLine(QPointF(fullscreenCenter.x() - 3.0, standTop + 2.0),
+                     QPointF(fullscreenCenter.x() + 3.0, standTop + 2.0));
+
+    if (m_ModePickerOpen) {
+        // The picker covers the stats and bitrate slider until a choice is
+        // made, the button is clicked again, or it times out.
+        const QRectF first = modeChoiceRect(0);
+        const QRectF last = modeChoiceRect(2);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(22, 27, 34));
+        painter.drawRect(QRectF(first.left() - 4.0, 1.0,
+                                last.right() - first.left() + 8.0,
+                                ToolbarHeight - 2.0));
+
+        const Control current = m_TwoScreensInUse ? Control::ChoiceTwoScreens :
+                                isFullscreen ? Control::ChoiceFullscreen :
+                                               Control::ChoiceWindowed;
+        const Control hovered = m_LocalPointerInteraction ?
+                    modeChoiceAt(m_PointerX, m_PointerY) : Control::None;
+        const struct {
+            Control control;
+            const char* label;
+        } choices[] = {
+            {Control::ChoiceFullscreen, "Full screen"},
+            {Control::ChoiceWindowed, "Window"},
+            {Control::ChoiceTwoScreens, "Two monitors"},
+        };
+        QFont choiceFont = labelFont;
+        choiceFont.setPixelSize(12);
+        painter.setFont(choiceFont);
+        for (int i = 0; i < 3; ++i) {
+            const QRectF rect = modeChoiceRect(i);
+            const bool selectable = choices[i].control != Control::ChoiceTwoScreens ||
+                                    m_TwoScreensAvailable || m_TwoScreensInUse;
+            const bool isCurrent = choices[i].control == current;
+            painter.setPen(QPen(isCurrent ? QColor(52, 132, 228) :
+                                            QColor(104, 116, 131), 1));
+            painter.setBrush(isCurrent ? QColor(52, 132, 228) :
+                             !selectable ? QColor(36, 42, 50) :
+                             hovered == choices[i].control ? QColor(68, 78, 90) :
+                                                             QColor(48, 57, 68));
+            painter.drawRoundedRect(rect, WindowButtonRadius, WindowButtonRadius);
+            painter.setPen(isCurrent ? QColor(255, 255, 255) :
+                           selectable ? QColor(235, 239, 244) :
+                                        QColor(112, 120, 130));
+            painter.drawText(rect, Qt::AlignCenter, choices[i].label);
+        }
     }
 
     const QPointF minimizeCenter(m_Width - 55.0, 19.0);
@@ -1458,10 +1509,54 @@ PlankToolbar::Control PlankToolbar::controlAt(int x, int y) const
     if (disconnectContains(x, y)) {
         return Control::Disconnect;
     }
+    if (m_ModePickerOpen) {
+        // The picker sits over the slider; nothing underneath is clickable.
+        return modeChoiceAt(x, y);
+    }
     if (sliderContains(x, y)) {
         return Control::Slider;
     }
     return Control::None;
+}
+
+/**
+ * @brief Toolbar-relative rectangle of one screen-picker choice.
+ *
+ * @param index 0 = full screen, 1 = window, 2 = two monitors.
+ */
+QRectF PlankToolbar::modeChoiceRect(int index) const
+{
+    const qreal left = 57.0;
+    const qreal right = std::max(left + 240.0, qreal(m_Width) - 110.0);
+    const qreal gap = 6.0;
+    const qreal width = (right - left - 2.0 * gap) / 3.0;
+    return QRectF(left + index * (width + gap), 6.0, width, 27.0);
+}
+
+PlankToolbar::Control PlankToolbar::modeChoiceAt(int x, int y) const
+{
+    static constexpr Control choices[] = {
+        Control::ChoiceFullscreen,
+        Control::ChoiceWindowed,
+        Control::ChoiceTwoScreens,
+    };
+    const QPointF point(x - toolbarLeft(), y);
+    for (int i = 0; i < 3; ++i) {
+        if (modeChoiceRect(i).contains(point)) {
+            return choices[i];
+        }
+    }
+    return Control::None;
+}
+
+void PlankToolbar::closeModePicker()
+{
+    if (!m_ModePickerOpen) {
+        return;
+    }
+    m_ModePickerOpen = false;
+    m_ModePickerDeadline = 0;
+    redraw();
 }
 
 int PlankToolbar::toolbarLeft() const

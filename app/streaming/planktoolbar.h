@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <memory>
+#include <QRectF>
 #include <QString>
 
 #include "planktoolbarlogic.h"
@@ -23,6 +24,10 @@ public:
         Consumed,
         ToggleFullscreen,
         ToggleTwoScreens,
+        // Explicit choices from the monitor button's picker.
+        ShowFullscreen,
+        ShowWindowed,
+        ShowTwoScreens,
         Minimize,
         Disconnect,
         KeepWaiting,
@@ -71,6 +76,9 @@ private:
         Fullscreen,
         Minimize,
         Disconnect,
+        ChoiceFullscreen,
+        ChoiceWindowed,
+        ChoiceTwoScreens,
     };
 
     void show(Uint64 now);
@@ -103,6 +111,9 @@ private:
     bool fullscreenContains(int x, int y) const;
     bool minimizeContains(int x, int y) const;
     bool disconnectContains(int x, int y) const;
+    QRectF modeChoiceRect(int index) const;
+    Control modeChoiceAt(int x, int y) const;
+    void closeModePicker();
     Control controlAt(int x, int y) const;
     int toolbarLeft() const;
     int sliderLeft() const;
@@ -156,6 +167,9 @@ private:
     QString m_CodecLabel;
     bool m_TwoScreensAvailable {};
     bool m_TwoScreensInUse {};
+    // The monitor button opens a three-way picker over the stats/slider area.
+    bool m_ModePickerOpen {};
+    Uint64 m_ModePickerDeadline {};
     Uint64 m_LastStayLogTime;
     float m_LastDrawnFps;
     float m_LastDrawnVideoMbps;

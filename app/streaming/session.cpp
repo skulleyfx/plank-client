@@ -3503,6 +3503,12 @@ Session* Session::createDisplayChangeRestartSession()
                 !replacement->m_PlankUsername.isEmpty() &&
                 !replacement->m_PlankPassword.isEmpty());
     replacement->m_DisplayChangeRestart = true;
+    if (m_RestartFullScreen != -1) {
+        // The screen picker chose the window mode explicitly; it wins over the
+        // saved preference for this replacement session only.
+        replacement->m_IsFullScreen = m_RestartFullScreen == 1 ||
+                !WMUtils::isRunningDesktopEnvironment();
+    }
     m_CanReconnect.store(false);
     return replacement;
 }
@@ -3533,36 +3539,80 @@ static QString plankVideoFormatLabel(int videoFormat)
  *
  * @param action Action reported by the toolbar.
  */
+/**
+ * @brief Restart the session to switch between one and two screens.
+ *
+ * A one/two-screen change alters the SDL window set, decoder canvas, input
+ * topology, and host capture layout. The lightweight transport reconnect
+ * deliberately retains those objects, so it cannot apply this change. End this
+ * Session cleanly and let StreamSegue replace it after deferred connection
+ * cleanup completes.
+ *
+ * @param twoScreens Whether the replacement session spans two monitors.
+ * @param fullScreen Whether the replacement session starts full screen.
+ */
+void Session::restartForScreenLayout(bool twoScreens, bool fullScreen)
+{
+    {
+        QWriteLocker lock(&m_Computer->lock);
+        m_Computer->plankTwoScreens = twoScreens;
+    }
+    if (m_ComputerManager != nullptr) {
+        m_ComputerManager->clientSideAttributeUpdated(m_Computer);
+    }
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "Two-screen preference for %s set to %s (%s); reconnecting to apply it",
+                qPrintable(m_Computer->name), twoScreens ? "on" : "off",
+                fullScreen ? "full screen" : "window");
+    setPlankReconnectStatus(
+                twoScreens ? "Switching to two screens..."
+                           : "Switching to one screen...",
+                false);
+    m_RestartFullScreen = fullScreen ? 1 : 0;
+    m_RestartForDisplayChange = true;
+    SDL_Event quitEvent = {};
+    quitEvent.type = SDL_EVENT_QUIT;
+    SDL_PushEvent(&quitEvent);
+}
+
 void Session::applyToolbarAction(PlankToolbar::Action action)
 {
+    const bool isFullScreen =
+            m_Window != nullptr &&
+            (SDL_GetWindowFlags(m_Window) & m_FullScreenFlag) != 0;
     switch (action) {
-    case PlankToolbar::Action::ToggleTwoScreens: {
-        const bool wantTwo = !m_UseMultiDisplayPresentation;
-        {
-            QWriteLocker lock(&m_Computer->lock);
-            m_Computer->plankTwoScreens = wantTwo;
-        }
-        if (m_ComputerManager != nullptr) {
-            m_ComputerManager->clientSideAttributeUpdated(m_Computer);
-        }
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Two-screen preference for %s set to %s; reconnecting to apply it",
-                    qPrintable(m_Computer->name), wantTwo ? "on" : "off");
-        setPlankReconnectStatus(
-                    wantTwo ? "Switching to two screens..."
-                            : "Switching to one screen...",
-                    false);
-        // A one/two-screen change alters the SDL window set, decoder canvas,
-        // input topology, and host capture layout. The lightweight transport
-        // reconnect deliberately retains those objects, so it cannot apply
-        // this change. End this Session cleanly and let StreamSegue replace it
-        // after deferred connection cleanup completes.
-        m_RestartForDisplayChange = true;
-        SDL_Event quitEvent = {};
-        quitEvent.type = SDL_EVENT_QUIT;
-        SDL_PushEvent(&quitEvent);
+    case PlankToolbar::Action::ToggleTwoScreens:
+        restartForScreenLayout(!m_UseMultiDisplayPresentation, true);
         break;
-    }
+    case PlankToolbar::Action::ShowTwoScreens:
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "PLANK screen picker: two monitors");
+        if (!m_UseMultiDisplayPresentation) {
+            restartForScreenLayout(true, true);
+        }
+        break;
+    case PlankToolbar::Action::ShowFullscreen:
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "PLANK screen picker: full screen");
+        if (m_UseMultiDisplayPresentation) {
+            restartForScreenLayout(false, true);
+        }
+        else if (!isFullScreen) {
+            toggleFullscreen();
+            m_PlankToolbar->notifyWindowChanged();
+        }
+        break;
+    case PlankToolbar::Action::ShowWindowed:
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "PLANK screen picker: window");
+        if (m_UseMultiDisplayPresentation) {
+            restartForScreenLayout(false, false);
+        }
+        else if (isFullScreen) {
+            toggleFullscreen();
+            m_PlankToolbar->notifyWindowChanged();
+        }
+        break;
     case PlankToolbar::Action::ToggleFullscreen:
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "PLANK toolbar fullscreen toggle requested");
@@ -5062,6 +5112,9 @@ void Session::execInternal()
                 }
                 if (action == PlankToolbar::Action::ToggleTwoScreens ||
                         action == PlankToolbar::Action::ToggleFullscreen ||
+                        action == PlankToolbar::Action::ShowFullscreen ||
+                        action == PlankToolbar::Action::ShowWindowed ||
+                        action == PlankToolbar::Action::ShowTwoScreens ||
                         action == PlankToolbar::Action::Minimize) {
                     applyToolbarAction(action);
                     break;
