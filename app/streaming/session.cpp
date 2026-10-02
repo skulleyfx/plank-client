@@ -70,6 +70,7 @@
 #include "plank_transport.h"
 #include "plank_transport_control.h"
 #include "plank_transport_event.h"
+#include "plank_transport_input.h"
 #include "plank_transport_setup.h"
 #endif
 
@@ -1486,25 +1487,49 @@ void Session::plankTransportDataReceiveLoop()
             LiNotifyPlankCursorPosition(
                         event.payload, event.payload_size);
             break;
-        case PlankClipboardTextEvent:
+        case PlankClipboardTextEvent: {
             if (!m_PlankClipboardEnabled) {
                 LiNotifyPlankHostTermination(-1);
                 return;
             }
-            if (event.payload_size > 0 &&
-                    event.payload_size <= PlankClipboardMaxBytes) {
+            // One framed chunk of a host clipboard offer. A malformed or
+            // out-of-order chunk drops that offer, not the stream.
+            PlankClipboardChunk chunk {};
+            if (!plank_clipboard_decode(event.payload, event.payload_size,
+                                        PLANK_CLIPBOARD_MAX_EVENT_CHUNK_SIZE, &chunk)) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "Ignoring a malformed clipboard chunk from the host");
+                m_PlankClipboardAssembly.reset();
+                break;
+            }
+            if (chunk.generation <= m_PlankClipboardLastHostGeneration) {
+                break;  // a retransmission of something already applied
+            }
+            switch (m_PlankClipboardAssembly.appendChunk(chunk)) {
+            case plank::clipboard::AppendResult::Incomplete:
+                break;
+            case plank::clipboard::AppendResult::Rejected:
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "Dropped an inconsistent clipboard offer from the host");
+                break;
+            case plank::clipboard::AppendResult::Complete: {
+                m_PlankClipboardLastHostGeneration = chunk.generation;
                 {
                     QMutexLocker locker(&m_PlankClipboardLock);
                     m_PlankClipboardIncoming = QString::fromUtf8(
-                                reinterpret_cast<const char*>(event.payload),
-                                event.payload_size);
+                                reinterpret_cast<const char*>(m_PlankClipboardAssembly.bytes.data()),
+                                static_cast<int>(m_PlankClipboardAssembly.bytes.size()));
                 }
+                m_PlankClipboardAssembly.reset();
                 SDL_Event clipboardEvent = {};
                 clipboardEvent.type = SDL_EVENT_USER;
                 clipboardEvent.user.code = SDL_CODE_PLANK_CLIPBOARD_TEXT;
                 SDL_PushEvent(&clipboardEvent);
+                break;
+            }
             }
             break;
+        }
         default:
             qWarning() << "Rejected unexpected native KyProto event type"
                        << event.type;
@@ -1524,6 +1549,12 @@ void Session::pollLocalClipboard(Uint64 now)
         return;
     }
     m_PlankClipboardNextPoll = now + 250;
+
+    // Finish an offer the input queue had no room for before reading again.
+    if (m_PlankClipboardOutNext < m_PlankClipboardOutFrames.size()) {
+        sendPendingClipboardFrames();
+        return;
+    }
 
     if (!SDL_HasClipboardText()) {
         return;
@@ -1548,26 +1579,43 @@ void Session::pollLocalClipboard(Uint64 now)
     }
     m_PlankClipboardLastSeen = text;
 
-    QByteArray packet(PLANK_TRANSPORT_EVENT_HEADER_SIZE + utf8.size(), Qt::Uninitialized);
-    size_t packetSize = 0;
-    if (plank_transport_event_encode(
-                PlankClipboardTextEvent,
-                reinterpret_cast<const uint8_t*>(utf8.constData()),
-                static_cast<size_t>(utf8.size()),
-                reinterpret_cast<uint8_t*>(packet.data()),
-                static_cast<size_t>(packet.size()), &packetSize) != 0) {
-        return;
+    // Framed chunks on the input channel, as every PLANK host expects.
+    m_PlankClipboardOutFrames = plank::clipboard::buildEventFrames(
+                reinterpret_cast<const std::uint8_t*>(utf8.constData()),
+                static_cast<std::size_t>(utf8.size()),
+                ++m_PlankClipboardOutGeneration, PLANK_CLIPBOARD_MAX_INPUT_CHUNK_SIZE);
+    m_PlankClipboardOutNext = 0;
+    if (m_PlankClipboardOutFrames.empty()) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Clipboard text is not valid UTF-8; not shared");
     }
-    if (plank_transport_native_data_send(
-                m_PlankTransportEndpoint,
-                reinterpret_cast<const uint8_t*>(packet.constData()),
-                packetSize) != PLANK_TRANSPORT_OK) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Couldn't send clipboard text to the host");
-    }
+    sendPendingClipboardFrames();
 #else
     Q_UNUSED(now)
 #endif
 }
+
+#ifdef PLANK_TRANSPORT
+/**
+ * @brief Send the rest of the current clipboard offer to the host.
+ *
+ * Stops at the first chunk the input queue will not take; the next clipboard
+ * poll resumes from that chunk, so a long paste is never restarted or torn.
+ */
+void Session::sendPendingClipboardFrames()
+{
+    while (m_PlankClipboardOutNext < m_PlankClipboardOutFrames.size()) {
+        const auto& frame = m_PlankClipboardOutFrames[m_PlankClipboardOutNext];
+        if (plankTransportNativeInputSender(
+                    m_PlankTransportEndpoint, PLANK_TRANSPORT_INPUT_CLIPBOARD_OFFER,
+                    frame.data(), frame.size()) != PLANK_TRANSPORT_OK) {
+            return;
+        }
+        ++m_PlankClipboardOutNext;
+    }
+    m_PlankClipboardOutFrames.clear();
+    m_PlankClipboardOutNext = 0;
+}
+#endif
 
 int Session::plankTransportNativeControlSender(void* context, uint32_t type,
                                           uint32_t value1, uint32_t value2)

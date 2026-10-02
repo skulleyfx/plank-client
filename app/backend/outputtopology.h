@@ -59,7 +59,8 @@ struct NvOutputTopology
     static const int FixedCaptureFeature = 0x80000;
     static const int MacDesktopPreparationFeature = 0x100000;
     static const int MacEncodingProfileFeature = 0x200000;
-    // Plain-text clipboard sharing, both directions. Windows hosts only today.
+    // Plain-text clipboard sync in the framed format shared by every PLANK
+    // host and client (protocol/clipboard-sync.md); Alan names it ClipboardSync.
     static const int ClipboardTextFeature = 0x400000;
     // Windows hosts join two outputs into one canvas only for clients that
     // ask, so this bit is sent per launch, not in SupportedFeatureFlags.

@@ -22,6 +22,9 @@
 #include "video/overlaymanager.h"
 #include "videopacketlosswindow.h"
 #include "planktoolbar.h"
+#ifdef PLANK_TRANSPORT
+#include "plankclipboard.h"
+#endif
 
 class ComputerManager;
 class PlankToolbar;
@@ -475,15 +478,29 @@ private:
     std::atomic<float> m_CurrentVideoMbps;
     VideoFecLossPercent m_CurrentVideoFecLoss;
     std::atomic<std::uint32_t> m_CurrentNetworkRttMs;
-    // Plain-text clipboard sharing. Text only, and only with hosts that
-    // advertise the feature; see NvOutputTopology::ClipboardTextFeature.
+    // Plain-text clipboard sync in the framed format every PLANK endpoint
+    // uses (protocol/clipboard-sync.md): host offers arrive on event 5, ours
+    // go out on the input channel. Only with hosts that advertise
+    // NvOutputTopology::ClipboardSyncFeature.
     static const std::uint16_t PlankClipboardTextEvent = 5;
     void pollLocalClipboard(Uint64 now);
+#ifdef PLANK_TRANSPORT
+    void sendPendingClipboardFrames();
+#endif
     // Paints the window with the PLANK logo so it is not white while the
     // stream starts.
     void paintStartupSplash(SDL_Window* window);
-    static const int PlankClipboardMaxBytes = 60000;
+    static const int PlankClipboardMaxBytes = 512 * 1024;  // PLANK_CLIPBOARD_TEXT_LIMIT
     bool m_PlankClipboardEnabled = false;
+#ifdef PLANK_TRANSPORT
+    // Host offer being reassembled (transport thread only).
+    plank::clipboard::Assembly m_PlankClipboardAssembly;
+    std::uint64_t m_PlankClipboardLastHostGeneration = 0;
+    // Our offer: frames are kept so queue pressure resumes at the unsent chunk.
+    std::uint64_t m_PlankClipboardOutGeneration = 0;
+    std::vector<std::vector<std::uint8_t>> m_PlankClipboardOutFrames;
+    std::size_t m_PlankClipboardOutNext = 0;
+#endif
     QMutex m_PlankClipboardLock;
     QString m_PlankClipboardIncoming;
     QString m_PlankClipboardLastSeen;

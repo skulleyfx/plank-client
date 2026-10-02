@@ -316,6 +316,7 @@ HEADERS += \
     streaming/plankpresentation.h \
     streaming/planktoolbar.h \
     streaming/planktoolbarlogic.h \
+    streaming/plankclipboard.h \
     streaming/audio/renderers/renderer.h \
     streaming/audio/renderers/sdl.h \
     gui/computermodel.h \
