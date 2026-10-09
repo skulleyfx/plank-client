@@ -264,6 +264,7 @@ SOURCES += \
     backend/computerseeker.cpp \
     backend/nvcomputer.cpp \
     backend/nvhttp.cpp \
+    backend/plankcertificate.cpp \
     backend/computermanager.cpp \
     backend/relaywakeclient.cpp \
     cli/commandlineparser.cpp \
@@ -300,6 +301,7 @@ HEADERS += \
     backend/nvcomputer.h \
     backend/planknetwork.h \
     backend/nvhttp.h \
+    backend/plankcertificate.h \
     backend/desktopstage.h \
     backend/hostrecovery.h \
     backend/planksharedscreen.h \
