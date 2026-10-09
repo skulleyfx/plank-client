@@ -190,6 +190,7 @@ NvHTTP::startApp(QString verb,
                  int plankProtocolVersion,
                  int plankFeatureFlags,
                  bool takeOverActiveSession,
+                 bool joinAsViewer,
                  QString hostLayout,
                  QString virtualMode1,
                  QString virtualMode2,
@@ -213,6 +214,11 @@ NvHTTP::startApp(QString verb,
         if (takeOverActiveSession &&
                 (plankFeatureFlags & NvOutputTopology::SessionTakeoverFeature) != 0) {
             plankOutputArguments += "&plankTakeover=1";
+        }
+        if (joinAsViewer) {
+            // Watch the live session instead of taking it over. The host
+            // admits this only with the shared-screen feature bit.
+            plankOutputArguments += "&plankSessionRole=viewer";
         }
         plankOutputArguments +=
                 "&plankCaptureSource=" +
@@ -321,6 +327,17 @@ NvHTTP::startApp(QString verb,
     if (acceptedEncodingMode.isEmpty() || acceptedEncodingMode != encodingMode) {
         throw GfeHttpResponseException(
                     400, "Host did not accept the requested encoding mode");
+    }
+    // A viewer must never silently become the controller of the desktop, and
+    // a controller must never be handed a view-only stream.
+    const QString acceptedSessionRole = getXmlString(response, "PlankSessionRole");
+    if (joinAsViewer && acceptedSessionRole != QStringLiteral("viewer")) {
+        throw GfeHttpResponseException(
+                    400, "Host did not accept the view-only session role");
+    }
+    if (!joinAsViewer && acceptedSessionRole == QStringLiteral("viewer")) {
+        throw GfeHttpResponseException(
+                    400, "Host started a view-only session that was not requested");
     }
 }
 

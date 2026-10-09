@@ -3109,6 +3109,7 @@ bool Session::startConnectionAsync(bool reconnecting,
                                  NvOutputTopology::AdaptiveBitrateFeature)) ?
                                    NvOutputTopology::AdaptiveBitrateFeature : 0),
                           takeOverActiveSession,
+                          false,
                           m_ResolvedHostLayout,
                           m_ResolvedVirtualModes.value(0),
                           m_ResolvedVirtualModes.value(1),

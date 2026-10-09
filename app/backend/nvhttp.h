@@ -184,6 +184,7 @@ public:
              int plankProtocolVersion,
              int plankFeatureFlags,
              bool takeOverActiveSession,
+             bool joinAsViewer,
              QString hostLayout,
              QString virtualMode1,
              QString virtualMode2,
