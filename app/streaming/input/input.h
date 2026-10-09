@@ -226,6 +226,7 @@ private:
     void updateTabletCursorVisibility();
     bool hostCursorSurfaceVisible();
     void updateWin32ViewerCursor(bool imageChanged);
+    bool setLocalCursorShape(RemoteCursorState& cursor);
     QSize streamDimensions() const;
     bool sendAbsoluteMousePosition(SDL_Window* window,
                                    int windowX, int windowY,

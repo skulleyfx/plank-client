@@ -247,6 +247,13 @@ void SdlInputHandler::setViewOnly(bool viewOnly)
         }
         m_ViewOnly = true;
         m_ViewerSession = true;
+        // A viewer's local pointer goes back to the system shape; the host
+        // pointer is drawn at the host's position instead.
+        if (m_RemoteCursor != nullptr) {
+            SDL_SetCursor(SDL_GetDefaultCursor());
+            SDL_DestroyCursor(m_RemoteCursor);
+            m_RemoteCursor = nullptr;
+        }
         // These combos type into or grab the host, which a viewer never does.
         m_UngrabComboEnabledBeforeViewOnly =
                 m_SpecialKeyCombos[KeyComboUngrabInput].enabled;
@@ -261,6 +268,12 @@ void SdlInputHandler::setViewOnly(bool viewOnly)
         m_ViewOnly = false;
         m_SpecialKeyCombos[KeyComboUngrabInput].enabled =
                 m_UngrabComboEnabledBeforeViewOnly;
+        // The local pointer now drives the host, so it takes the host's
+        // shape like a controller's does. Later shapes arrive through
+        // applyPendingRemoteCursor().
+        if (m_LocalCursorSupported && m_AppliedRemoteCursorValid) {
+            setLocalCursorShape(m_AppliedRemoteCursor);
+        }
         SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
                     "PLANK shared screen: local input reaches the host");
     }
@@ -397,6 +410,41 @@ bool SdlInputHandler::handleRemoteCursorChunk(const unsigned char* data,
     return !m_RemoteCursorUpdatePending.exchange(true);
 }
 
+bool SdlInputHandler::setLocalCursorShape(RemoteCursorState& cursor)
+{
+    SDL_Surface* surface = SDL_CreateSurfaceFrom(
+                static_cast<int>(cursor.width),
+                static_cast<int>(cursor.height),
+                SDL_PIXELFORMAT_ARGB8888,
+                cursor.pixels.data(),
+                static_cast<int>(cursor.width * 4U));
+    if (surface == nullptr) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_INPUT,
+                    "Failed to create PLANK cursor surface: %s",
+                    SDL_GetError());
+        return false;
+    }
+
+    SDL_Cursor* replacement = SDL_CreateColorCursor(
+                surface,
+                static_cast<int>(cursor.hotspotX),
+                static_cast<int>(cursor.hotspotY));
+    SDL_DestroySurface(surface);
+    if (replacement == nullptr) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_INPUT,
+                    "Failed to create PLANK compositor cursor: %s",
+                    SDL_GetError());
+        return false;
+    }
+
+    SDL_SetCursor(replacement);
+    if (m_RemoteCursor != nullptr) {
+        SDL_DestroyCursor(m_RemoteCursor);
+    }
+    m_RemoteCursor = replacement;
+    return true;
+}
+
 void SdlInputHandler::applyPendingRemoteCursor()
 {
     RemoteCursorState cursor;
@@ -414,37 +462,8 @@ void SdlInputHandler::applyPendingRemoteCursor()
     const bool firstCursor = !m_AppliedRemoteCursorValid;
     // A viewer's local pointer is not the host's pointer, so it keeps the
     // system shape; the host's shape is only drawn at the host's position.
-    if (!m_ViewOnly) {
-        SDL_Surface* surface = SDL_CreateSurfaceFrom(
-                    static_cast<int>(cursor.width),
-                    static_cast<int>(cursor.height),
-                    SDL_PIXELFORMAT_ARGB8888,
-                    cursor.pixels.data(),
-                    static_cast<int>(cursor.width * 4U));
-        if (surface == nullptr) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_INPUT,
-                        "Failed to create PLANK cursor surface: %s",
-                        SDL_GetError());
-            return;
-        }
-
-        SDL_Cursor* replacement = SDL_CreateColorCursor(
-                    surface,
-                    static_cast<int>(cursor.hotspotX),
-                    static_cast<int>(cursor.hotspotY));
-        SDL_DestroySurface(surface);
-        if (replacement == nullptr) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_INPUT,
-                        "Failed to create PLANK compositor cursor: %s",
-                        SDL_GetError());
-            return;
-        }
-
-        SDL_SetCursor(replacement);
-        if (m_RemoteCursor != nullptr) {
-            SDL_DestroyCursor(m_RemoteCursor);
-        }
-        m_RemoteCursor = replacement;
+    if (!m_ViewOnly && !setLocalCursorShape(cursor)) {
+        return;
     }
     m_RemoteCursorVisible =
             (cursor.flags & PLANK_CURSOR_FLAG_VISIBLE) != 0;
