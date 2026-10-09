@@ -22,6 +22,35 @@
 #include "video/slvid.h"
 #endif
 
+// The shared-screen helper names the bookmark enums without including the
+// preferences header; keep the two in step.
+static_assert(int(PlankSharedScreen::ProfileH264_10Bit444) == int(StreamingPreferences::PLANK_PROFILE_H264_10BIT_444) &&
+              int(PlankSharedScreen::ProfileH264_8Bit422) == int(StreamingPreferences::PLANK_PROFILE_H264_8BIT_422) &&
+              int(PlankSharedScreen::ProfileH264_8Bit444) == int(StreamingPreferences::PLANK_PROFILE_H264_8BIT_444) &&
+              int(PlankSharedScreen::ProfileH264_10Bit422) == int(StreamingPreferences::PLANK_PROFILE_H264_10BIT_422) &&
+              int(PlankSharedScreen::ProfileNvencH264_8Bit444) == int(StreamingPreferences::PLANK_PROFILE_NVENC_H264_8BIT_444) &&
+              int(PlankSharedScreen::ProfileNvencHevc8Bit444) == int(StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_8BIT_444) &&
+              int(PlankSharedScreen::ProfileNvencHevc10Bit444) == int(StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_10BIT_444) &&
+              int(PlankSharedScreen::ProfileAppleHevc10Bit420) == int(StreamingPreferences::PLANK_PROFILE_APPLE_HEVC_10BIT_420) &&
+              int(PlankSharedScreen::ProfileAppleHevc10Bit444) == int(StreamingPreferences::PLANK_PROFILE_APPLE_HEVC_10BIT_444) &&
+              int(PlankSharedScreen::ProfileNvencHevc8Bit420) == int(StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_8BIT_420),
+              "PlankSharedScreen::Profile must match StreamingPreferences::PlankVideoProfile");
+static_assert(int(PlankSharedScreen::CaptureNvfbc8Bit) == int(StreamingPreferences::PLANK_CAPTURE_NVFBC_8BIT) &&
+              int(PlankSharedScreen::CaptureX11Native10) == int(StreamingPreferences::PLANK_CAPTURE_X11_NATIVE10) &&
+              int(PlankSharedScreen::CaptureScreenCaptureKit) == int(StreamingPreferences::PLANK_CAPTURE_SCREENCAPTUREKIT) &&
+              int(PlankSharedScreen::CaptureDdup) == int(StreamingPreferences::PLANK_CAPTURE_DDUP) &&
+              int(PlankSharedScreen::CaptureWgc) == int(StreamingPreferences::PLANK_CAPTURE_WGC),
+              "PlankSharedScreen::CaptureSource must match StreamingPreferences::PlankCaptureSource");
+
+static int plankIdentityGbrBitDepth(int profile)
+{
+    return (profile == StreamingPreferences::PLANK_PROFILE_H264_8BIT_422 ||
+            profile == StreamingPreferences::PLANK_PROFILE_H264_8BIT_444 ||
+            profile == StreamingPreferences::PLANK_PROFILE_NVENC_H264_8BIT_444 ||
+            profile == StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_8BIT_444 ||
+            profile == StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_8BIT_420) ? 8 : 10;
+}
+
 #ifdef Q_OS_WIN32
 // Scaling the icon down on Win32 looks dreadful, so render at lower res
 #define ICON_SIZE 32
@@ -791,16 +820,7 @@ Session::Session(NvComputer* computer, NvApp& app,
         // never writes changes back to the bookmark.
         m_Preferences->fps = 60;
         m_Preferences->identityGbrBitDepth =
-                (m_PlankVideoProfile ==
-                     StreamingPreferences::PLANK_PROFILE_H264_8BIT_422 ||
-                 m_PlankVideoProfile ==
-                     StreamingPreferences::PLANK_PROFILE_H264_8BIT_444 ||
-                 m_PlankVideoProfile ==
-                     StreamingPreferences::PLANK_PROFILE_NVENC_H264_8BIT_444 ||
-                 m_PlankVideoProfile ==
-                     StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_8BIT_444 ||
-                 m_PlankVideoProfile ==
-                     StreamingPreferences::PLANK_PROFILE_NVENC_HEVC_8BIT_420) ? 8 : 10;
+                plankIdentityGbrBitDepth(m_PlankVideoProfile);
         // Decoder selection is internal and exact-profile constrained. Hardware
         // is accepted only after a test frame proves the requested bit depth,
         // chroma sampling, and identity mapping; otherwise the same profile
@@ -1693,6 +1713,25 @@ bool Session::initialize()
     }
 #endif
 
+    if (m_JoinAsViewer) {
+        // A viewer receives the controller's stream, so it launches and sets
+        // up its decoder with the controller's values, never its bookmark's.
+        m_PlankVideoProfile = static_cast<StreamingPreferences::PlankVideoProfile>(
+                    m_ViewerStream.profile);
+        m_PlankCaptureSource = static_cast<StreamingPreferences::PlankCaptureSource>(
+                    m_ViewerStream.capture);
+        m_PlankBitrateKbps = m_ViewerStream.bitrateKbps;
+        m_Preferences->identityGbrBitDepth =
+                plankIdentityGbrBitDepth(m_PlankVideoProfile);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "PLANK shared screen: watching %dx%dx%d %s from %s via %s at %d Kbps, %d audio channels",
+                    m_ViewerStream.width, m_ViewerStream.height, m_ViewerStream.fps,
+                    qPrintable(m_ViewerStream.encodingMode),
+                    qPrintable(m_ViewerStream.captureSource),
+                    qPrintable(m_ViewerStream.encoderBackend),
+                    m_ViewerStream.bitrateKbps, m_ViewerStream.audioChannels);
+    }
+
     if (!StreamingPreferences::isPlankProfileValidForCaptureSource(
                 m_PlankVideoProfile,
                 m_PlankCaptureSource)) {
@@ -1760,6 +1799,9 @@ bool Session::initialize()
 
     m_StreamConfig.fps = m_PlankCaptureSource == StreamingPreferences::PLANK_CAPTURE_SCREENCAPTUREKIT ?
                 60 : m_Preferences->fps;
+    if (m_JoinAsViewer) {
+        m_StreamConfig.fps = m_ViewerStream.fps;
+    }
     m_StreamConfig.bitrate = m_PlankBitrateKbps;
 
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -1781,6 +1823,13 @@ bool Session::initialize()
     if (m_PlankCaptureSource == StreamingPreferences::PLANK_CAPTURE_SCREENCAPTUREKIT) {
         // The authenticated Mac contract is system audio, stereo 48 kHz.
         m_StreamConfig.audioConfiguration = AUDIO_CONFIGURATION_STEREO;
+    }
+    if (m_JoinAsViewer) {
+        // The host fans out the controller's one audio encoder.
+        m_StreamConfig.audioConfiguration =
+                m_ViewerStream.audioChannels == 8 ? AUDIO_CONFIGURATION_71_SURROUND :
+                m_ViewerStream.audioChannels == 6 ? AUDIO_CONFIGURATION_51_SURROUND :
+                                                    AUDIO_CONFIGURATION_STEREO;
     }
 
     LiInitializeAudioCallbacks(&m_AudioCallbacks);
@@ -2129,7 +2178,9 @@ bool Session::snapshotClientDisplays()
     const bool hostCanSpanDisplays =
             (m_Computer->plankFeatureFlags &
              NvOutputTopology::TwoScreenCaptureFeature) != 0;
-    m_UseMultiDisplayPresentation = m_IsFullScreen &&
+    // A viewer shows the controller's picture in one window or screen.
+    m_UseMultiDisplayPresentation = PlankSharedScreen::policyFor(m_JoinAsViewer).usesTwoScreens &&
+            m_IsFullScreen &&
             m_ClientDisplays.size() >= 2 &&
             hostCanSpanDisplays &&
             m_Computer->plankTwoScreens;
@@ -2676,6 +2727,30 @@ QSize Session::configurePlankDisplayMode()
 
 bool Session::configurePlankLaunchGeometry()
 {
+    if (m_JoinAsViewer) {
+        // A viewer must not change the workstation's displays: it binds to
+        // the layout the host has right now (what the controller asked for)
+        // and takes the controller's stream size instead of its own monitor's.
+        {
+            QReadLocker lock(&m_Computer->lock);
+            m_ResolvedHostLayout = m_Computer->outputTopology.layoutKind;
+            m_ResolvedVirtualModes = m_Computer->outputTopology.virtualModes;
+        }
+        m_ResolvedScalingMode = NvOutputTopology::ScaledSpanMode;
+        m_StreamConfig.width = m_ViewerStream.width;
+        m_StreamConfig.height = m_ViewerStream.height;
+        if (m_InputHandler != nullptr) {
+            m_InputHandler->setStreamDimensions(m_ViewerStream.width,
+                                                m_ViewerStream.height);
+        }
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "PLANK shared screen: live host layout=%s modes=%s stream=%dx%d",
+                    qPrintable(m_ResolvedHostLayout),
+                    qPrintable(m_ResolvedVirtualModes.join(',')),
+                    m_ViewerStream.width, m_ViewerStream.height);
+        return true;
+    }
+
     if (m_Computer->plankAuthentication &&
             !configurePlankHostLayout()) {
         return false;
@@ -2932,7 +3007,7 @@ bool Session::startConnectionAsync(bool reconnecting,
 {
     // Wait 1.5 seconds before connecting to let the user
     // have time to read any messages present on the segue
-    if (!reconnecting && !takeOverActiveSession) {
+    if (!reconnecting && !takeOverActiveSession && !m_JoinAsViewer) {
         SDL_Delay(1500);
     }
 
@@ -3091,6 +3166,21 @@ bool Session::startConnectionAsync(bool reconnecting,
                 acceptedEncodingMode = encodingMode;
                 return;
             }
+            // A viewer asks for neither two screens nor adaptive bitrate:
+            // both would change the controller's shared encoder.
+            const int launchFeatureFlags = m_JoinAsViewer ?
+                        (m_Computer->plankFeatureFlags &
+                         NvOutputTopology::SupportedFeatureFlags) |
+                            NvOutputTopology::SharedScreenFeature :
+                        (m_Computer->plankFeatureFlags &
+                         NvOutputTopology::SupportedFeatureFlags) |
+                            (m_UseMultiDisplayPresentation ?
+                                 (m_Computer->plankFeatureFlags &
+                                  NvOutputTopology::TwoScreenCaptureFeature) : 0) |
+                            ((m_Preferences->plankAdaptiveBitrate &&
+                              (m_Computer->plankFeatureFlags &
+                               NvOutputTopology::AdaptiveBitrateFeature)) ?
+                                 NvOutputTopology::AdaptiveBitrateFeature : 0);
             http->startApp(m_Computer->currentGameId != 0 ? "resume" : "launch",
                           m_App.id, &m_StreamConfig,
                           m_Preferences->playAudioOnHost,
@@ -3099,17 +3189,9 @@ bool Session::startConnectionAsync(bool reconnecting,
                           NvOutputTopology::ScaledSpanMode,
                           m_Computer->outputTopology.generation,
                           m_Computer->plankTopologyVersion,
-                          (m_Computer->plankFeatureFlags &
-                           NvOutputTopology::SupportedFeatureFlags) |
-                              (m_UseMultiDisplayPresentation ?
-                                   (m_Computer->plankFeatureFlags &
-                                    NvOutputTopology::TwoScreenCaptureFeature) : 0) |
-                              ((m_Preferences->plankAdaptiveBitrate &&
-                                (m_Computer->plankFeatureFlags &
-                                 NvOutputTopology::AdaptiveBitrateFeature)) ?
-                                   NvOutputTopology::AdaptiveBitrateFeature : 0),
-                          takeOverActiveSession,
-                          false,
+                          launchFeatureFlags,
+                          takeOverActiveSession && !m_JoinAsViewer,
+                          m_JoinAsViewer,
                           m_ResolvedHostLayout,
                           m_ResolvedVirtualModes.value(0),
                           m_ResolvedVirtualModes.value(1),
@@ -3128,6 +3210,17 @@ bool Session::startConnectionAsync(bool reconnecting,
             startApp();
         } catch (const GfeHttpResponseException& e) {
             const QString statusMessage = QString::fromUtf8(e.getStatusMessage());
+            if (m_JoinAsViewer) {
+                // Viewer refusals (feature off, nothing to watch, viewer limit,
+                // settings that differ from the live stream) are final. Never
+                // retry, change layouts or offer a takeover from here.
+                qWarning() << "PLANK shared screen: the host refused the viewer:"
+                           << e.toQString();
+                emit displayLaunchError(statusMessage.isEmpty() ?
+                                            tr("Host returned error: %1").arg(e.toQString()) :
+                                            statusMessage);
+                return false;
+            }
             const bool displayTransitionStarted =
                     m_Computer->plankAuthentication &&
                     ((e.getStatusCode() == 425 &&
@@ -3316,9 +3409,14 @@ bool Session::startConnectionAsync(bool reconnecting,
                     qInfo() << "PLANK reconnect stopped because another client owns the active session";
                     return false;
                 }
-                if (takeOverActiveSession ||
+                const bool canTakeOver = !takeOverActiveSession &&
                         (m_Computer->plankFeatureFlags &
-                         NvOutputTopology::SessionTakeoverFeature) == 0) {
+                         NvOutputTopology::SessionTakeoverFeature) != 0;
+                // Hosts with shared screen on also let this client watch.
+                const bool canWatch = !takeOverActiveSession &&
+                        (m_Computer->plankFeatureFlags &
+                         NvOutputTopology::SharedScreenFeature) != 0;
+                if (!canTakeOver && !canWatch) {
                     emit displayLaunchError(
                                 tr("The workstation has an active PLANK session that cannot be transferred."));
                     return false;
@@ -3327,17 +3425,31 @@ bool Session::startConnectionAsync(bool reconnecting,
                 constexpr int DecisionPollMs = 50;
                 m_ActiveSessionTakeoverDecision.store(0);
                 m_WaitingForActiveSessionTakeoverDecision.store(true);
-                emit activeSessionTakeoverRequested(
-                            tr("This workstation already has an active PLANK session. Disconnect the existing client and continue?"));
+                if (canWatch) {
+                    emit activeSessionChoiceRequested(
+                                canTakeOver ?
+                                    tr("This workstation already has an active PLANK session. Watch it without control, or disconnect the existing client and continue?") :
+                                    tr("This workstation already has an active PLANK session. Watch it without control?"),
+                                canTakeOver);
+                }
+                else {
+                    emit activeSessionTakeoverRequested(
+                                tr("This workstation already has an active PLANK session. Disconnect the existing client and continue?"));
+                }
                 while (m_ActiveSessionTakeoverDecision.load() == 0 &&
                        !m_ConnectionStartCancelled.load()) {
                     SDL_Delay(DecisionPollMs);
                 }
                 m_WaitingForActiveSessionTakeoverDecision.store(false);
-                if (m_ActiveSessionTakeoverDecision.exchange(0) != 1 ||
-                        m_ConnectionStartCancelled.load()) {
+                const int decision = m_ActiveSessionTakeoverDecision.exchange(0);
+                if (m_ConnectionStartCancelled.load() ||
+                        !((decision == 1 && canTakeOver) ||
+                          (decision == 2 && canWatch))) {
                     qInfo() << "PLANK active-session takeover was cancelled";
                     return false;
+                }
+                if (decision == 2) {
+                    return prepareViewerRestart(*http);
                 }
 
                 m_WaitingForSessionCleanup.store(true);
@@ -3401,6 +3513,7 @@ bool Session::startConnectionAsync(bool reconnecting,
         // app instead of issuing a second launch request.
         if (m_Computer->plankAuthentication) {
             m_PlankClipboardEnabled =
+                    PlankSharedScreen::policyFor(m_JoinAsViewer).syncsClipboard &&
                     m_Preferences->plankClipboardText &&
                     (m_Computer->plankFeatureFlags & NvOutputTopology::ClipboardTextFeature) != 0;
             m_PlankWorkerInstance = (m_Computer->plankFeatureFlags & NvOutputTopology::WorkerInstanceFeature) ?
@@ -3529,6 +3642,91 @@ void Session::cancelConnectionStart()
     m_ActiveSessionTakeoverDecision.store(-1);
 }
 
+void Session::respondToActiveSessionChoice(int choice)
+{
+    int expected = 0;
+    const int decision = choice == 1 || choice == 2 ? choice : -1;
+    if (m_ActiveSessionTakeoverDecision.compare_exchange_strong(
+                expected, decision)) {
+        qInfo() << "PLANK active-session decision:"
+                << (decision == 1 ? "take over" :
+                    decision == 2 ? "watch" : "cancel");
+    }
+}
+
+// Called in a non-main thread
+bool Session::prepareViewerRestart(NvHTTP& http)
+{
+    // The controller's stream shape decides the decoder, which this session
+    // has already chosen for its bookmark. Fetch the shape, then let the
+    // stream segue start a replacement session that is set up as a viewer
+    // from the beginning. The refused launch did not consume the host token,
+    // so the replacement launches with it.
+    QString serverInfo;
+    NvOutputTopology topology;
+    m_WaitingForSessionCleanup.store(true);
+    emit sessionCleanupWaitChanged(true, tr("Joining as a viewer..."));
+    try {
+        serverInfo = http.getServerInfo(NvHTTP::NVLL_ERROR);
+        topology = http.getOutputTopology();
+    } catch (const GfeHttpResponseException& e) {
+        m_WaitingForSessionCleanup.store(false);
+        emit sessionCleanupWaitChanged(false, QString());
+        emit displayLaunchError(tr("Host returned error: %1").arg(e.toQString()));
+        return false;
+    } catch (const QtNetworkReplyException& e) {
+        m_WaitingForSessionCleanup.store(false);
+        emit sessionCleanupWaitChanged(false, QString());
+        emit displayLaunchError(e.toQString());
+        return false;
+    }
+    m_WaitingForSessionCleanup.store(false);
+    emit sessionCleanupWaitChanged(false, QString());
+    if (m_ConnectionStartCancelled.load()) {
+        return false;
+    }
+
+    const QString mode = NvHTTP::getXmlString(serverInfo, "PlankSharedStreamMode");
+    const QString encodingMode =
+            NvHTTP::getXmlString(serverInfo, "PlankSharedStreamEncodingMode");
+    const QString captureSource =
+            NvHTTP::getXmlString(serverInfo, "PlankSharedStreamCaptureSource");
+    const QString encoderBackend =
+            NvHTTP::getXmlString(serverInfo, "PlankSharedStreamEncoderBackend");
+    PlankSharedScreen::Stream stream;
+    if (!PlankSharedScreen::parse(
+                mode, encodingMode, captureSource, encoderBackend,
+                NvHTTP::getXmlString(serverInfo, "PlankSharedStreamBitrateKbps"),
+                NvHTTP::getXmlString(serverInfo, "PlankSharedStreamAudioChannels"),
+                NvHTTP::getXmlString(serverInfo, "PlankSharedStreamViewers"),
+                stream)) {
+        qWarning() << "PLANK shared screen: no usable shared stream:"
+                   << mode << encodingMode << captureSource << encoderBackend;
+        emit displayLaunchError(
+                    mode.isEmpty() ?
+                        tr("Nothing to watch on this workstation right now.") :
+                        tr("This client cannot show the workstation's shared stream (%1, %2).")
+                            .arg(mode, encodingMode));
+        return false;
+    }
+
+    {
+        QWriteLocker lock(&m_Computer->lock);
+        m_Computer->outputTopology = topology;
+    }
+    if (m_ComputerManager != nullptr) {
+        m_ComputerManager->clientSideAttributeUpdated(m_Computer);
+    }
+    qInfo() << "PLANK shared screen: joining as a viewer of"
+            << mode << encodingMode << "with" << stream.viewers
+            << "viewer(s) already watching";
+    m_ViewerStream = stream;
+    m_RestartAsViewer = true;
+    m_RestartForDisplayChange = true;
+    // No stream started here; the stream segue replaces this session.
+    return false;
+}
+
 void Session::respondToActiveSessionTakeover(bool takeOver)
 {
     int expected = 0;
@@ -3546,6 +3744,15 @@ Session* Session::createDisplayChangeRestartSession()
     }
     Session* replacement = new Session(
                 m_Computer, m_App, m_Preferences, m_ComputerManager);
+    if (m_RestartAsViewer) {
+        // A viewer never reconnects, so it takes no reconnect credentials;
+        // this session clears them when it is destroyed.
+        replacement->m_JoinAsViewer = true;
+        replacement->m_ViewerStream = m_ViewerStream;
+        replacement->clearPlankReconnectCredentials();
+        m_CanReconnect.store(false);
+        return replacement;
+    }
     replacement->m_PlankUsername = std::move(m_PlankUsername);
     replacement->m_PlankPassword = std::move(m_PlankPassword);
     replacement->m_CanReconnect.store(

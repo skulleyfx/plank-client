@@ -302,6 +302,7 @@ HEADERS += \
     backend/nvhttp.h \
     backend/desktopstage.h \
     backend/hostrecovery.h \
+    backend/planksharedscreen.h \
     backend/computermanager.h \
     backend/relaywakeclient.h \
     cli/commandlineparser.h \

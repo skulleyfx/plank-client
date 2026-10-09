@@ -1,5 +1,6 @@
 import QtQuick 2.0
 import QtQuick.Controls 2.2
+import QtQuick.Layouts 1.2
 import QtQuick.Window 2.2
 
 import Session 1.0
@@ -54,6 +55,13 @@ Item {
         activeSessionTakeoverDialog.open()
     }
 
+    function activeSessionChoiceRequested(text, canTakeOver)
+    {
+        activeSessionChoiceDialog.text = text
+        activeSessionChoiceDialog.canTakeOver = canTakeOver
+        activeSessionChoiceDialog.open()
+    }
+
     function displayLaunchError(text)
     {
         // Display the error dialog after Session::exec() returns
@@ -76,8 +84,10 @@ Item {
     function sessionFinished()
     {
         activeSessionTakeoverDialog.close()
+        activeSessionChoiceDialog.close()
         if (session.restartForDisplayChange) {
-            stageText = qsTr("Switching displays...")
+            stageText = session.restartAsViewer ? qsTr("Joining as a viewer...") :
+                                                  qsTr("Switching displays...")
             stageSpinner.visible = true
             stageSpinner.running = true
             stageLabel.visible = true
@@ -134,6 +144,7 @@ Item {
         session.connectionStarted.connect(connectionStarted)
         session.sessionCleanupWaitChanged.connect(sessionCleanupWaitChanged)
         session.activeSessionTakeoverRequested.connect(activeSessionTakeoverRequested)
+        session.activeSessionChoiceRequested.connect(activeSessionChoiceRequested)
         session.displayLaunchError.connect(displayLaunchError)
         session.displayLaunchWarning.connect(displayLaunchWarning)
         session.sessionFinished.connect(sessionFinished)
@@ -166,6 +177,77 @@ Item {
 
         onAccepted: session.respondToActiveSessionTakeover(true)
         onRejected: session.respondToActiveSessionTakeover(false)
+    }
+
+    // Shown instead of the dialog above when the workstation also lets this
+    // client watch the live session (shared screen).
+    NavigableDialog {
+        id: activeSessionChoiceDialog
+        property string text
+        property bool canTakeOver: true
+        property bool answered: false
+        title: qsTr("Active PLANK session")
+        modal: true
+        closePolicy: Popup.CloseOnEscape
+
+        function choose(choice)
+        {
+            answered = true
+            close()
+            session.respondToActiveSessionChoice(choice)
+        }
+
+        onAboutToShow: answered = false
+        onOpened: watchButton.forceActiveFocus(Qt.TabFocus)
+        onClosed: {
+            // Escape, or the stream ending, cancels.
+            if (!answered && session) {
+                session.respondToActiveSessionChoice(-1)
+            }
+        }
+
+        ColumnLayout {
+            spacing: 16
+
+            Label {
+                text: activeSessionChoiceDialog.text
+                font.pointSize: 11
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+                Layout.maximumWidth: 420
+            }
+
+            RowLayout {
+                spacing: 8
+                Layout.alignment: Qt.AlignRight
+
+                Button {
+                    flat: true
+                    visible: activeSessionChoiceDialog.canTakeOver
+                    text: qsTr("Take Over")
+                    onClicked: activeSessionChoiceDialog.choose(1)
+                    Keys.onReturnPressed: clicked()
+                    Keys.onEnterPressed: clicked()
+                }
+
+                Button {
+                    id: watchButton
+                    flat: true
+                    text: qsTr("Watch (view only)")
+                    onClicked: activeSessionChoiceDialog.choose(2)
+                    Keys.onReturnPressed: clicked()
+                    Keys.onEnterPressed: clicked()
+                }
+
+                Button {
+                    flat: true
+                    text: qsTr("Cancel")
+                    onClicked: activeSessionChoiceDialog.choose(-1)
+                    Keys.onReturnPressed: clicked()
+                    Keys.onEnterPressed: clicked()
+                }
+            }
+        }
     }
 
     Timer {

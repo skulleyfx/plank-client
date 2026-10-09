@@ -16,6 +16,7 @@
 #include <Limelight.h>
 #include <opus_multistream.h>
 #include "settings/streamingpreferences.h"
+#include "backend/planksharedscreen.h"
 #include "input/input.h"
 #include "video/decoder.h"
 #include "audio/renderers/renderer.h"
@@ -27,6 +28,7 @@
 #endif
 
 class ComputerManager;
+class NvHTTP;
 class PlankToolbar;
 #ifdef PLANK_TRANSPORT
 struct PlankTransportNativeEndpoint;
@@ -141,11 +143,23 @@ public:
 
     Q_INVOKABLE void respondToActiveSessionTakeover(bool takeOver);
 
+    // Answer to activeSessionChoiceRequested(): 1 = take over, 2 = watch
+    // (view only), anything else cancels.
+    Q_INVOKABLE void respondToActiveSessionChoice(int choice);
+
     Q_PROPERTY(bool restartForDisplayChange READ restartForDisplayChange)
 
     bool restartForDisplayChange() const
     {
         return m_RestartForDisplayChange;
+    }
+
+    // The replacement session joins the live session as a viewer.
+    Q_PROPERTY(bool restartAsViewer READ restartAsViewer)
+
+    bool restartAsViewer() const
+    {
+        return m_RestartAsViewer;
     }
 
     Q_INVOKABLE Session* createDisplayChangeRestartSession();
@@ -197,6 +211,10 @@ signals:
 
     void activeSessionTakeoverRequested(QString text);
 
+    // Like activeSessionTakeoverRequested(), for a host that also lets this
+    // client watch the live session.
+    void activeSessionChoiceRequested(QString text, bool canTakeOver);
+
     void displayLaunchError(QString text);
 
     void displayLaunchWarning(QString text);
@@ -214,6 +232,8 @@ private:
 
     bool startConnectionAsync(bool reconnecting = false,
                               bool takeOverActiveSession = false);
+
+    bool prepareViewerRestart(NvHTTP& http);
 
     struct PlankReconnectState {
         bool retainedRenderer = false;
@@ -426,6 +446,12 @@ private:
     std::atomic_bool m_WaitingForSessionCleanup;
     std::atomic_bool m_WaitingForActiveSessionTakeoverDecision {false};
     std::atomic_int m_ActiveSessionTakeoverDecision {0};
+    // Shared screen: this session watches the workstation's live session and
+    // sends nothing that could change it. m_ViewerStream is the controller's
+    // stream shape, which a viewer must match exactly.
+    bool m_JoinAsViewer = false;
+    bool m_RestartAsViewer = false;
+    PlankSharedScreen::Stream m_ViewerStream;
     bool m_RestartForDisplayChange = false;
     // Window mode the replacement session starts in after a screen-layout
     // restart: -1 = follow preferences, 0 = windowed, 1 = full screen.
