@@ -779,14 +779,14 @@ NvOutputTopology NvHTTP::prepareMacDisplay(const QString& mode, const QString& e
     }
     QString pin;
     const auto current = getOutputTopology(&pin);
-    if (current.featureFlags != NvOutputTopology::FixedCaptureFlags) {
+    if (!NvOutputTopology::isFixedCaptureHost(current.featureFlags)) {
         throw GfeHttpResponseException(400, "Host does not support Mac desktop preparation");
     }
     const auto object = postPinnedMacJson(QStringLiteral("/plank/display"),
         {{"schema_version", 2}, {"width", size.width()}, {"height", size.height()}, {"encoding_mode", encodingMode}}, pin);
     NvOutputTopology result;
     if (!NvOutputTopology::fromJson(object, result) ||
-            result.featureFlags != NvOutputTopology::FixedCaptureFlags ||
+            !NvOutputTopology::isFixedCaptureHost(result.featureFlags) ||
             result.desktopWidth != size.width() || result.desktopHeight != size.height() || result.appleEncodingMode != encodingMode) {
         throw GfeHttpResponseException(400, "Mac desktop did not reach the requested resolution");
     }

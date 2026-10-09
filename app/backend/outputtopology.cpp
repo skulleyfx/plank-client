@@ -14,10 +14,16 @@ const char* NvOutputTopology::PhysicalHostLayout = "physical";
 const char* NvOutputTopology::SingleHostLayout = "single";
 const char* NvOutputTopology::DualHorizontalHostLayout = "dual-horizontal";
 
+bool NvOutputTopology::isFixedCaptureHost(int flags)
+{
+    return (flags & FixedCaptureFlags) == FixedCaptureFlags &&
+            (flags & ~(FixedCaptureFlags | FixedCaptureOptionalFlags)) == 0;
+}
+
 bool NvOutputTopology::supportsDescription(int version, int featureFlags)
 {
     if (version != ProtocolVersion) return false;
-    if (featureFlags & FixedCaptureFeature) return featureFlags == FixedCaptureFlags;
+    if (featureFlags & FixedCaptureFeature) return isFixedCaptureHost(featureFlags);
     const int linuxDescription = OutputTopologyFeature | SelectedOutputFeature |
             UnifiedAbsoluteInputFeature;
     return (featureFlags & linuxDescription) == linuxDescription;
@@ -37,8 +43,11 @@ QJsonObject applePreviewProfile(const QString& mode)
 
 bool parseFixedCapture(const QJsonObject& object, NvOutputTopology& result)
 {
+    const QJsonValue flagsValue = object.value("feature_flags");
     if (object.size() != 4 || object.value("schema_version") != QJsonValue(NvOutputTopology::ProtocolVersion) ||
-            object.value("feature_flags") != QJsonValue(NvOutputTopology::FixedCaptureFlags) ||
+            !flagsValue.isDouble() || flagsValue.toDouble() != std::floor(flagsValue.toDouble()) ||
+            flagsValue.toDouble() < 0 || flagsValue.toDouble() > 0x7fffffff ||
+            !NvOutputTopology::isFixedCaptureHost(static_cast<int>(flagsValue.toDouble())) ||
             !object.value("capture").isObject()) return false;
     const QString generation = object.value("generation").toString();
     if (QUuid(generation).isNull() || QUuid(generation).toString(QUuid::WithoutBraces) != generation) return false;
@@ -69,7 +78,7 @@ bool parseFixedCapture(const QJsonObject& object, NvOutputTopology& result)
     if (logical.width() <= 0 || logical.height() <= 0) return false;
     NvOutputTopology parsed;
     parsed.schemaVersion = NvOutputTopology::ProtocolVersion;
-    parsed.featureFlags = NvOutputTopology::FixedCaptureFlags;
+    parsed.featureFlags = static_cast<int>(flagsValue.toDouble());
     parsed.generation = generation;
     parsed.desktopWidth = width;
     parsed.desktopHeight = height;
@@ -336,7 +345,7 @@ bool NvOutputTopology::fromJson(const QJsonObject& object,
 
 QJsonObject NvOutputTopology::toJson() const
 {
-    if (featureFlags == FixedCaptureFlags && outputs.size() == 1) {
+    if (isFixedCaptureHost(featureFlags) && outputs.size() == 1) {
         return {{"schema_version", schemaVersion}, {"feature_flags", featureFlags},
                 {"generation", generation}, {"capture", QJsonObject {
                     {"id", outputs.first().id}, {"width", desktopWidth}, {"height", desktopHeight},
@@ -392,7 +401,7 @@ bool NvOutputTopology::contains(QString outputId) const
 
 bool NvOutputTopology::displayPolicyKnown() const
 {
-    if (schemaVersion == ProtocolVersion && featureFlags == FixedCaptureFlags) return true;
+    if (schemaVersion == ProtocolVersion && isFixedCaptureHost(featureFlags)) return true;
     return schemaVersion == ProtocolVersion &&
             validLayoutKind(layoutKind) && validLayoutKind(startupLayoutKind) &&
             !allowedLayoutKinds.isEmpty();
@@ -400,7 +409,7 @@ bool NvOutputTopology::displayPolicyKnown() const
 
 bool NvOutputTopology::allowsBookmarkHostLayout(const QString& layout) const
 {
-    if (featureFlags == FixedCaptureFlags) return layout == QStringLiteral("fixed") || layout == MatchClientHostLayout;
+    if (isFixedCaptureHost(featureFlags)) return layout == QStringLiteral("fixed") || layout == MatchClientHostLayout;
     if (!displayPolicyKnown()) {
         return true;
     }
@@ -442,7 +451,7 @@ bool NvOutputTopology::matchesRequestedHostLayout(const QString& layout,
 int NvOutputTopology::hostPlatform(int version, int flags)
 {
     if (!supportsDescription(version, flags)) return 0;
-    return flags == FixedCaptureFlags ? 2 : 1;
+    return isFixedCaptureHost(flags) ? 2 : 1;
 }
 
 QString NvOutputTopology::resolveMacClientDisplayMode(const QVector<NvClientDisplay>& displays, QString* error)

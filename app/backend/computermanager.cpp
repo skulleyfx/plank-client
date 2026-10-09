@@ -729,7 +729,7 @@ private:
                 QReadLocker lock(&m_Computer->lock);
                 topologySupported = NvOutputTopology::supportsDescription(
                             m_Computer->plankTopologyVersion, m_Computer->plankFeatureFlags);
-                macDesktop = m_Computer->plankFeatureFlags == NvOutputTopology::FixedCaptureFlags;
+                macDesktop = NvOutputTopology::isFixedCaptureHost(m_Computer->plankFeatureFlags);
                 desktopMode = m_MatchedDesktopMode.isEmpty() ? m_Computer->plankVirtualMode1 : m_MatchedDesktopMode;
                 appleEncodingMode = StreamingPreferences::plankAppleEncodingMode(m_Computer->plankVideoProfile);
             }

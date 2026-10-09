@@ -21,6 +21,7 @@ private slots:
     void rejectsInvalidFixedCapture();
     void recognizesDescriptionCapabilities();
     void matchesMacClientCanvas();
+    void recognizesMacHostGenerations();
 };
 
 void TestOutputTopology::recognizesDescriptionCapabilities()
@@ -40,6 +41,30 @@ void TestOutputTopology::recognizesDescriptionCapabilities()
     QCOMPARE(NvOutputTopology::hostPlatform(version, linuxFlags), 1);
     QCOMPARE(NvOutputTopology::hostPlatform(version, 0), 0);
     QCOMPARE(NvOutputTopology::hostPlatform(version - 1, fixed), 0);
+}
+
+void TestOutputTopology::recognizesMacHostGenerations()
+{
+    const int version = NvOutputTopology::ProtocolVersion;
+    const int base = NvOutputTopology::FixedCaptureFlags;
+    const int oldMac = base;
+    const int newMac = base | NvOutputTopology::ClipboardTextFeature | NvOutputTopology::SessionTakeoverFeature;
+    for (int flags : {oldMac, newMac, base | NvOutputTopology::ClipboardTextFeature,
+                      base | NvOutputTopology::SessionTakeoverFeature}) {
+        QVERIFY(NvOutputTopology::isFixedCaptureHost(flags));
+        QVERIFY(NvOutputTopology::supportsDescription(version, flags));
+        QCOMPARE(NvOutputTopology::hostPlatform(version, flags), 2);
+    }
+    const int windowsHost = NvOutputTopology::SupportedFeatureFlags | NvOutputTopology::TwoScreenCaptureFeature;
+    for (int flags : {0, -1, NvOutputTopology::SupportedFeatureFlags, windowsHost,
+                      NvOutputTopology::ClipboardTextFeature | NvOutputTopology::SessionTakeoverFeature,
+                      base & ~NvOutputTopology::MacEncodingProfileFeature,
+                      base | NvOutputTopology::UnifiedAbsoluteInputFeature,
+                      base | NvOutputTopology::SharedScreenFeature,
+                      newMac | NvOutputTopology::AdaptiveBitrateFeature}) {
+        QVERIFY(!NvOutputTopology::isFixedCaptureHost(flags));
+    }
+    QCOMPARE(NvOutputTopology::hostPlatform(version, windowsHost), 1);
 }
 
 void TestOutputTopology::matchesMacClientCanvas()
@@ -120,8 +145,19 @@ void TestOutputTopology::rejectsInvalidFixedCapture()
         QVERIFY(!NvOutputTopology::fromJson(object, topology));
     }
     auto object = fixture;
-    object["feature_flags"] = NvOutputTopology::FixedCaptureFlags | NvOutputTopology::SessionTakeoverFeature;
-    QVERIFY(!NvOutputTopology::fromJson(object, topology));
+    // Mac hosts 1.0.143+ add clipboard and takeover; anything else is rejected.
+    object["feature_flags"] = NvOutputTopology::FixedCaptureFlags | NvOutputTopology::SessionTakeoverFeature |
+            NvOutputTopology::ClipboardTextFeature;
+    QVERIFY(NvOutputTopology::fromJson(object, topology));
+    QCOMPARE(topology.featureFlags, object["feature_flags"].toInt());
+    QCOMPARE(topology.toJson(), object);
+    for (QJsonValue bad : {QJsonValue(NvOutputTopology::FixedCaptureFlags | NvOutputTopology::UnifiedAbsoluteInputFeature),
+                           QJsonValue(NvOutputTopology::FixedCaptureFlags ^ NvOutputTopology::FixedCaptureFeature),
+                           QJsonValue(1.5), QJsonValue(-1), QJsonValue("x")}) {
+        object["feature_flags"] = bad;
+        QVERIFY(!NvOutputTopology::fromJson(object, topology));
+    }
+    object = fixture;
     object = fixture; object["generation"] = "not-a-generation";
     QVERIFY(!NvOutputTopology::fromJson(object, topology));
     object = fixture; object["layout"] = QJsonObject();

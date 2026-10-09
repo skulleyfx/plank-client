@@ -12,7 +12,7 @@ inline QJsonObject request(const NvOutputTopology& topology, int bitrateKbps,
                            int udpPayloadSize)
 {
     NvOutputTopology checked;
-    if (topology.featureFlags != NvOutputTopology::FixedCaptureFlags ||
+    if (!NvOutputTopology::isFixedCaptureHost(topology.featureFlags) ||
             !NvOutputTopology::fromJson(topology.toJson(), checked) ||
             bitrateKbps < 10000 || bitrateKbps > 150000 ||
             udpPayloadSize < 1200 || udpPayloadSize > 65527) return {};

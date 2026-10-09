@@ -79,6 +79,11 @@ struct NvOutputTopology
     static const int FixedCaptureFlags = FixedCaptureFeature | OutputTopologyFeature |
             TopologyGenerationFeature | HostLayoutMetadataFeature | CompositeSourceRegionsFeature |
             MacDesktopPreparationFeature | MacEncodingProfileFeature;
+    // Mac hosts from 1.0.143 also advertise the clipboard and takeover bits
+    // on top of FixedCaptureFlags. Older Mac hosts send exactly the base set.
+    // Use this, never == FixedCaptureFlags, to recognise a Mac host.
+    static const int FixedCaptureOptionalFlags = ClipboardTextFeature | SessionTakeoverFeature;
+    static bool isFixedCaptureHost(int flags);
     static const int MaximumVirtualCanvasWidth = 8192;
     static const int SupportedFeatureFlags = OutputTopologyFeature |
                                              SelectedOutputFeature |

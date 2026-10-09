@@ -2792,7 +2792,7 @@ bool Session::configurePlankHostLayout()
     }
     else if (layoutPolicy == QStringLiteral("fixed") &&
              m_PlankCaptureSource == StreamingPreferences::PLANK_CAPTURE_SCREENCAPTUREKIT &&
-             m_Computer->outputTopology.featureFlags == NvOutputTopology::FixedCaptureFlags) {
+             NvOutputTopology::isFixedCaptureHost(m_Computer->outputTopology.featureFlags)) {
         m_ResolvedHostLayout = layoutPolicy;
     }
     else if (layoutPolicy == NvOutputTopology::PhysicalHostLayout) {
@@ -4173,7 +4173,7 @@ bool Session::runPlankReconnect()
             }
             if (greeterConfirmed &&
                     ((m_Computer->plankFeatureFlags & NvOutputTopology::AuthenticatedDesktopStageFeature) ||
-                     m_Computer->plankFeatureFlags == NvOutputTopology::FixedCaptureFlags)) {
+                     NvOutputTopology::isFixedCaptureHost(m_Computer->plankFeatureFlags))) {
                 m_ReconnectGreeterConfirmed.store(true);
             }
 
@@ -4185,7 +4185,7 @@ bool Session::runPlankReconnect()
                 QReadLocker lock(&m_Computer->lock);
                 topologySupported = NvOutputTopology::supportsDescription(
                             m_Computer->plankTopologyVersion, m_Computer->plankFeatureFlags);
-                macDesktop = m_Computer->plankFeatureFlags == NvOutputTopology::FixedCaptureFlags;
+                macDesktop = NvOutputTopology::isFixedCaptureHost(m_Computer->plankFeatureFlags);
                 desktopMode = m_Computer->plankVirtualMode1;
                 if (macDesktop && m_Computer->plankHostLayout == NvOutputTopology::MatchClientHostLayout) {
                     QVector<NvClientDisplay> displays;
