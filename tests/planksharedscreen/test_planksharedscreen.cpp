@@ -252,7 +252,7 @@ void TestPlankSharedScreen::parsesHostMessages()
     QVERIFY(parseHostMessage(R"({"t":"watchers","viewers":[{"id":2,"account":"ana","control":true},{"id":5,"account":"bo","control":false}]})",
                              message));
     QCOMPARE(int(message.type), int(HostMessage::Watchers));
-    QCOMPARE(message.watchers.size(), 2);
+    QCOMPARE(int(message.watchers.size()), 2);
     QCOMPARE(message.watchers.at(0).id, quint32(2));
     QVERIFY(message.watchers.at(0).control);
     QCOMPARE(message.watchers.at(1).account, QStringLiteral("bo"));
@@ -354,14 +354,14 @@ void TestPlankSharedScreen::joinPromptAllowsAndDenies()
     panel.handle(hostMessage(R"({"t":"join_request","id":7,"account":"casey"})"), 1000);
     QVERIFY(panel.needsAttention());
     QVector<Panel::Row> rows = panel.rows(1000);
-    QCOMPARE(rows.size(), 1);
+    QCOMPARE(int(rows.size()), 1);
     QCOMPARE(rows.at(0).text, QStringLiteral("casey wants to watch your screen (30 s)"));
-    QCOMPARE(rows.at(0).buttons.size(), 2);
+    QCOMPARE(int(rows.at(0).buttons.size()), 2);
     QCOMPARE(panel.rows(2500).at(0).text, QStringLiteral("casey wants to watch your screen (29 s)"));
 
     panel.activate(rows.at(0).buttons.at(0), 3000);
     QVector<QJsonObject> outbox = panel.takeOutbox();
-    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(int(outbox.size()), 1);
     QCOMPARE(outbox.at(0), joinAnswer(7, true));
     QVERIFY(panel.rows(3000).isEmpty());
     QVERIFY(!panel.needsAttention());
@@ -369,7 +369,7 @@ void TestPlankSharedScreen::joinPromptAllowsAndDenies()
     panel.handle(hostMessage(R"({"t":"join_request","id":8,"account":"ana"})"), 4000);
     panel.activate(panel.rows(4000).at(0).buttons.at(1), 4000);
     outbox = panel.takeOutbox();
-    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(int(outbox.size()), 1);
     QCOMPARE(outbox.at(0), joinAnswer(8, false));
 
     // A stale button for a prompt that is gone does nothing.
@@ -386,13 +386,13 @@ void TestPlankSharedScreen::promptsQueueOneAtATime()
     panel.handle(hostMessage(R"({"t":"join_request","id":2,"account":"b"})"), 200);
     QCOMPARE(panel.pendingPrompts(), 2);
     QVector<Panel::Row> rows = panel.rows(100);
-    QCOMPARE(rows.size(), 1);
+    QCOMPARE(int(rows.size()), 1);
     QVERIFY(rows.at(0).text.startsWith(QStringLiteral("a wants")));
     QVERIFY(rows.at(0).text.endsWith(QStringLiteral("1 more waiting")));
 
     panel.activate(rows.at(0).buttons.at(0), 500);
     rows = panel.rows(500);
-    QCOMPARE(rows.size(), 1);
+    QCOMPARE(int(rows.size()), 1);
     QVERIFY(rows.at(0).text.startsWith(QStringLiteral("b wants")));
     QVERIFY(!rows.at(0).text.contains(QStringLiteral("more waiting")));
 }
@@ -406,13 +406,13 @@ void TestPlankSharedScreen::unansweredPromptIsDenied()
     QVERIFY(panel.takeOutbox().isEmpty());
     panel.tick(31000);
     QVector<QJsonObject> outbox = panel.takeOutbox();
-    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(int(outbox.size()), 1);
     QCOMPARE(outbox.at(0), joinAnswer(1, false));
     // The queued request keeps its own deadline.
     QCOMPARE(panel.rows(31000).at(0).text, QStringLiteral("b asks for your mouse and keyboard (19 s)"));
     panel.tick(50000);
     outbox = panel.takeOutbox();
-    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(int(outbox.size()), 1);
     QCOMPARE(outbox.at(0), controlAnswer(2, false));
     QCOMPARE(panel.pendingPrompts(), 0);
 }
@@ -440,7 +440,7 @@ void TestPlankSharedScreen::controlPromptAnswersControl()
     QCOMPARE(rows.at(0).text, QStringLiteral("ana asks for your mouse and keyboard (30 s)"));
     panel.activate(rows.at(0).buttons.at(0), 10);
     const QVector<QJsonObject> outbox = panel.takeOutbox();
-    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(int(outbox.size()), 1);
     QCOMPARE(outbox.at(0), controlAnswer(5, true));
 }
 
@@ -459,12 +459,12 @@ void TestPlankSharedScreen::watchersListAndKick()
     QVERIFY(panel.rows(0).isEmpty());
     panel.activate(panel.slot(), 0);
     QVector<Panel::Row> rows = panel.rows(0);
-    QCOMPARE(rows.size(), 2);
+    QCOMPARE(int(rows.size()), 2);
     QCOMPARE(rows.at(0).text, QStringLiteral("ana"));
     QCOMPARE(rows.at(1).text, QStringLiteral("bo - has control"));
     panel.activate(rows.at(1).buttons.at(0), 0);
     const QVector<QJsonObject> outbox = panel.takeOutbox();
-    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(int(outbox.size()), 1);
     QCOMPARE(outbox.at(0), kick(5));
 
     // Fewer watchers do not reveal the toolbar; none hides the indicator.
@@ -485,18 +485,18 @@ void TestPlankSharedScreen::controllerTakeBackBanner()
     QVERIFY(!panel.controllerHasControl());
     QVERIFY(panel.needsAttention());
     const QVector<Panel::Row> rows = panel.rows(0);
-    QCOMPARE(rows.size(), 1);
+    QCOMPARE(int(rows.size()), 1);
     QCOMPARE(rows.at(0).text, QStringLiteral("bo has control"));
-    QCOMPARE(rows.at(0).buttons.size(), 1);
+    QCOMPARE(int(rows.at(0).buttons.size()), 1);
     panel.activate(rows.at(0).buttons.at(0), 0);
     const QVector<QJsonObject> outbox = panel.takeOutbox();
-    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(int(outbox.size()), 1);
     QCOMPARE(outbox.at(0), takeBack());
 
     panel.handle(hostMessage(R"({"t":"control_state","has_control":true,"reason":"taken_back"})"), 100);
     QVERIFY(panel.controllerHasControl());
     // Only a short notice is left, and it goes away.
-    QCOMPARE(panel.rows(100).size(), 1);
+    QCOMPARE(int(panel.rows(100).size()), 1);
     QVERIFY(panel.rows(100).at(0).buttons.isEmpty());
     panel.tick(100 + NoticeMs);
     QVERIFY(panel.rows(100 + NoticeMs).isEmpty());
@@ -510,7 +510,7 @@ void TestPlankSharedScreen::viewerRequestsAndReleasesControl()
     QCOMPARE(panel.slot().label, QStringLiteral("Request control"));
     panel.activate(panel.slot(), 0);
     QVector<QJsonObject> outbox = panel.takeOutbox();
-    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(int(outbox.size()), 1);
     QCOMPARE(outbox.at(0), controlRequest());
     QCOMPARE(panel.slot().label, QStringLiteral("Requested..."));
     QVERIFY(panel.slot().action == Panel::Action::None);
@@ -524,7 +524,7 @@ void TestPlankSharedScreen::viewerRequestsAndReleasesControl()
     QCOMPARE(panel.slot().label, QStringLiteral("Give back"));
     panel.activate(panel.slot(), 200);
     outbox = panel.takeOutbox();
-    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(int(outbox.size()), 1);
     QCOMPARE(outbox.at(0), controlRelease());
     // Input stops at once, before the host confirms.
     QVERIFY(!panel.viewerHasControl());
@@ -542,7 +542,7 @@ void TestPlankSharedScreen::viewerLosesControlWithReason()
     panel.takeOutbox();
     panel.handle(hostMessage(R"({"t":"control_state","has_control":false,"reason":"denied"})"), 100);
     QCOMPARE(panel.slot().label, QStringLiteral("Request control"));
-    QCOMPARE(panel.rows(100).size(), 1);
+    QCOMPARE(int(panel.rows(100).size()), 1);
     QVERIFY(panel.rows(100).at(0).text.contains(QStringLiteral("declined")));
 
     panel.handle(hostMessage(R"({"t":"control_state","has_control":true,"reason":"granted"})"), 200);
