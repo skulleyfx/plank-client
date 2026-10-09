@@ -203,7 +203,9 @@ void Session::clConnectionTerminated(int errorCode)
         s_ActiveSession->m_ReconnectCancelled.store(true);
         s_ActiveSession->m_UnexpectedTermination = false;
         emit s_ActiveSession->displayLaunchError(
-                    tr("This PLANK session was transferred to another client."));
+                    s_ActiveSession->m_JoinAsViewer ?
+                        tr("The shared session ended.") :
+                        tr("This PLANK session was transferred to another client."));
 
         SDL_Event event = {};
         event.type = SDL_EVENT_QUIT;
@@ -260,6 +262,10 @@ void Session::clConnectionTerminated(int errorCode)
     // Display the termination dialog if this was not intended
     switch (errorCode) {
     case ML_ERROR_GRACEFUL_TERMINATION:
+        // The host ends every viewer this way when the controller leaves.
+        if (s_ActiveSession->m_JoinAsViewer) {
+            emit s_ActiveSession->displayLaunchError(tr("The shared session ended."));
+        }
         break;
 
     case ML_ERROR_NO_VIDEO_TRAFFIC:
@@ -1646,6 +1652,11 @@ int Session::plankTransportNativeControlSender(void* context, uint32_t type,
     uint16_t wireType = 0;
     uint32_t values[2] {value1, value2};
     size_t valueCount = 0;
+    if (type == LI_SC_NATIVE_CONTROL_SET_VIDEO_BITRATE &&
+            s_ActiveSession != nullptr && s_ActiveSession->m_JoinAsViewer) {
+        // A viewer shares the controller's encoder and never changes it.
+        return PLANK_TRANSPORT_ERROR_INVALID_ARGUMENT;
+    }
     switch (type) {
     case LI_SC_NATIVE_CONTROL_REQUEST_IDR:
         wireType = PLANK_TRANSPORT_CONTROL_REQUEST_IDR;
@@ -1680,6 +1691,12 @@ int Session::plankTransportNativeInputSender(void* context, uint8_t type,
 {
     if (context == nullptr || payload == nullptr || payloadLength == 0) {
         return PLANK_TRANSPORT_ERROR_INVALID_ARGUMENT;
+    }
+    if (s_ActiveSession != nullptr && s_ActiveSession->m_JoinAsViewer) {
+        // View only: drop input and clipboard offers here as well as at their
+        // sources, so nothing a viewer does can reach the desktop. Report
+        // success so the input stream does not treat it as a failed link.
+        return PLANK_TRANSPORT_OK;
     }
     return plank_transport_native_input_send(
                 static_cast<PlankTransportNativeEndpoint*>(context), type,
@@ -4346,6 +4363,7 @@ void Session::execInternal()
     m_InputHandler = new SdlInputHandler(*m_Preferences,
                                          m_StreamConfig.width,
                                          m_StreamConfig.height);
+    m_InputHandler->setViewOnly(m_JoinAsViewer);
 
     m_ConnectionStartCancelled.store(false);
     AsyncConnectionStartThread asyncConnThread(this);
@@ -4724,7 +4742,8 @@ void Session::execInternal()
             m_PlankToolbar.reset(new PlankToolbar(
                         m_Window, m_OverlayManager, *m_InputHandler,
                         *m_Preferences, m_PlankBitrateKbps,
-                        plankVideoFormatLabel(m_ActiveVideoFormat)));
+                        plankVideoFormatLabel(m_ActiveVideoFormat),
+                        m_JoinAsViewer));
         }
     };
     if (!presentationMappingDeferred) {
@@ -4867,6 +4886,7 @@ void Session::execInternal()
                 m_PlankToolbar->setNetworkLatencyMs(rttMs == 0 ? -1 : static_cast<int>(rttMs));
             }
             m_PlankToolbar->setTwoScreenState(
+                        !m_JoinAsViewer &&
                         m_ClientDisplays.size() >= 2 &&
                         (m_Computer->plankFeatureFlags &
                          NvOutputTopology::TwoScreenCaptureFeature) != 0,

@@ -174,6 +174,11 @@ void SdlInputHandler::handleKeyEvent(SDL_KeyboardEvent* event)
         }
     }
 
+    if (m_ViewOnly) {
+        // Local shortcuts above still work; nothing is typed on the host.
+        return;
+    }
+
     // Set modifier flags
     modifiers = 0;
     if (event->mod & SDL_KMOD_CTRL) {

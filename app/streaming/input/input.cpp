@@ -176,6 +176,10 @@ void SdlInputHandler::setWindow(SDL_Window *window)
         SDL_LogInfo(SDL_LOG_CATEGORY_INPUT, "PLANK embedded host cursor enabled");
     }
 #ifdef HAVE_LIBINPUT_TABLET
+    if (m_ViewOnly) {
+        // A viewer's tablet must not reach the host.
+        return;
+    }
     const auto requestTabletCursor = [this]() {
         if (!m_TabletCursorActivationPending.exchange(true)) {
             Session::postTabletCursorActivationEvent();
@@ -219,6 +223,18 @@ void SdlInputHandler::setWindow(SDL_Window *window)
             (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0);
     }
 #endif
+}
+
+void SdlInputHandler::setViewOnly(bool viewOnly)
+{
+    m_ViewOnly = viewOnly;
+    if (m_ViewOnly) {
+        // These combos type into or grab the host, which a viewer never does.
+        m_SpecialKeyCombos[KeyComboPasteText].enabled = false;
+        m_SpecialKeyCombos[KeyComboUngrabInput].enabled = false;
+        SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
+                    "PLANK view-only session: local input is not sent to the host");
+    }
 }
 
 void SdlInputHandler::setPresentationLayout(
@@ -362,37 +378,41 @@ void SdlInputHandler::applyPendingRemoteCursor()
         m_RemoteCursorUpdatePending.store(false);
     }
 
-    SDL_Surface* surface = SDL_CreateSurfaceFrom(
-                static_cast<int>(cursor.width),
-                static_cast<int>(cursor.height),
-                SDL_PIXELFORMAT_ARGB8888,
-                cursor.pixels.data(),
-                static_cast<int>(cursor.width * 4U));
-    if (surface == nullptr) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_INPUT,
-                    "Failed to create PLANK cursor surface: %s",
-                    SDL_GetError());
-        return;
-    }
+    const bool firstCursor = !m_AppliedRemoteCursorValid;
+    // A viewer's local pointer is not the host's pointer, so it keeps the
+    // system shape; the host's shape is only drawn at the host's position.
+    if (!m_ViewOnly) {
+        SDL_Surface* surface = SDL_CreateSurfaceFrom(
+                    static_cast<int>(cursor.width),
+                    static_cast<int>(cursor.height),
+                    SDL_PIXELFORMAT_ARGB8888,
+                    cursor.pixels.data(),
+                    static_cast<int>(cursor.width * 4U));
+        if (surface == nullptr) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_INPUT,
+                        "Failed to create PLANK cursor surface: %s",
+                        SDL_GetError());
+            return;
+        }
 
-    SDL_Cursor* replacement = SDL_CreateColorCursor(
-                surface,
-                static_cast<int>(cursor.hotspotX),
-                static_cast<int>(cursor.hotspotY));
-    SDL_DestroySurface(surface);
-    if (replacement == nullptr) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_INPUT,
-                    "Failed to create PLANK compositor cursor: %s",
-                    SDL_GetError());
-        return;
-    }
+        SDL_Cursor* replacement = SDL_CreateColorCursor(
+                    surface,
+                    static_cast<int>(cursor.hotspotX),
+                    static_cast<int>(cursor.hotspotY));
+        SDL_DestroySurface(surface);
+        if (replacement == nullptr) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_INPUT,
+                        "Failed to create PLANK compositor cursor: %s",
+                        SDL_GetError());
+            return;
+        }
 
-    const bool firstCursor = m_RemoteCursor == nullptr;
-    SDL_SetCursor(replacement);
-    if (m_RemoteCursor != nullptr) {
-        SDL_DestroyCursor(m_RemoteCursor);
+        SDL_SetCursor(replacement);
+        if (m_RemoteCursor != nullptr) {
+            SDL_DestroyCursor(m_RemoteCursor);
+        }
+        m_RemoteCursor = replacement;
     }
-    m_RemoteCursor = replacement;
     m_RemoteCursorVisible =
             (cursor.flags & PLANK_CURSOR_FLAG_VISIBLE) != 0;
     m_AppliedRemoteCursor = cursor;
@@ -745,6 +765,10 @@ bool SdlInputHandler::isSystemKeyCaptureActive()
 
 void SdlInputHandler::setCaptureActive(bool active)
 {
+    if (m_ViewOnly) {
+        // A viewer never captures the pointer or keyboard.
+        active = false;
+    }
     if (active) {
         setCursorVisible(m_LocalCursorSupported ?
                              (!m_MouseWasInVideoRegion || m_RemoteCursorVisible) :
@@ -918,9 +942,7 @@ SdlInputHandler::ensureWaylandTabletCursorAttached(SDL_Window* targetWindow)
             cursor->setPosition(positionX, positionY);
         }
     }
-    const bool visible = m_TabletCursorActive && isCaptureActive() &&
-            m_RemoteCursorVisible && m_AppliedRemoteCursorPositionSequence >
-                m_TabletCursorActivationSequence &&
+    const bool visible = hostCursorSurfaceVisible() &&
             positionWindow == targetWindow;
     cursor->setVisible(visible);
     cursor->dispatchPending();
@@ -990,12 +1012,23 @@ void SdlInputHandler::updateTabletCursorVisibility()
                 m_AppliedRemoteCursorPosition,
                 positionWindow, x, y);
     }
-    const bool visible = m_TabletCursorActive && isCaptureActive() &&
-            m_RemoteCursorVisible &&
-            m_AppliedRemoteCursorPositionSequence >
-                m_TabletCursorActivationSequence;
+    const bool visible = hostCursorSurfaceVisible();
     for (auto& output : m_WaylandTabletCursorOutputs) {
         output.cursor->setVisible(visible && output.window == positionWindow);
         output.cursor->dispatchPending();
     }
+}
+
+bool SdlInputHandler::hostCursorSurfaceVisible()
+{
+    if (!m_RemoteCursorVisible) {
+        return false;
+    }
+    if (m_ViewOnly) {
+        // A viewer follows the host's own pointer wherever it is.
+        return m_AppliedRemoteCursorPositionValid;
+    }
+    return m_TabletCursorActive && isCaptureActive() &&
+            m_AppliedRemoteCursorPositionSequence >
+                m_TabletCursorActivationSequence;
 }

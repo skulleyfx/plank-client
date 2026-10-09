@@ -41,6 +41,9 @@ void SdlInputHandler::resetPenState()
 
 bool SdlInputHandler::isPenCaptureAvailable() const
 {
+    if (m_ViewOnly) {
+        return false;
+    }
 #ifdef HAVE_LIBINPUT_TABLET
     // libinput owns the tablet on this client; two capture paths would send
     // every stroke twice.

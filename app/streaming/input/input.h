@@ -34,6 +34,16 @@ public:
 
     void setPresentationLayout(const PlankPresentationLayout& layout);
 
+    /**
+     * @brief Watch the host without controlling it (shared-screen viewer).
+     *
+     * Nothing is captured or sent: no keyboard, mouse, pen or pasted text,
+     * and the local pointer stays an ordinary system pointer. Where a native
+     * cursor surface exists (Wayland) the host's pointer is drawn at the
+     * host's position. Call before setWindow().
+     */
+    void setViewOnly(bool viewOnly);
+
     void refreshWaylandTabletCursorParents();
 
     void handleKeyEvent(SDL_KeyboardEvent* event);
@@ -137,6 +147,7 @@ private:
     bool m_RemoteCursorVisible;
     bool m_CompositorCursorRequestedVisible;
     bool m_TabletCursorActive;
+    bool m_ViewOnly = false;
 
     QSet<short> m_KeysDown;
     bool m_FakeMouseCaptureActive;
@@ -198,6 +209,7 @@ private:
                                          SDL_Window*& window,
                                          int& x, int& y) const;
     void updateTabletCursorVisibility();
+    bool hostCursorSurfaceVisible();
     QSize streamDimensions() const;
     bool sendAbsoluteMousePosition(SDL_Window* window,
                                    int windowX, int windowY,

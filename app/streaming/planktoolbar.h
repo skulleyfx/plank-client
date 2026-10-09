@@ -38,7 +38,8 @@ public:
                           SdlInputHandler& inputHandler,
                           StreamingPreferences& preferences,
                           int initialBitrateKbps,
-                          const QString& codecLabel);
+                          const QString& codecLabel,
+                          bool viewOnly = false);
     ~PlankToolbar();
 
     void setRenderedStats(float fps, float videoMbps, float packetLossPercent);
@@ -135,6 +136,9 @@ private:
     bool m_PointerInside;
     bool m_PointerInitialized;
     bool m_LocalPointerInteraction;
+    // Shared-screen viewer: the bitrate belongs to the controller, so the
+    // slider is replaced by a "View only" badge.
+    bool m_ViewOnly;
     bool m_BitrateSupported;
     bool m_ReconnectPromptVisible;
     bool m_ReconnectPromptPointerInside;

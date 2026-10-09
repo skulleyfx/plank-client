@@ -77,7 +77,8 @@ PlankToolbar::PlankToolbar(
         SdlInputHandler& inputHandler,
         StreamingPreferences& preferences,
         int initialBitrateKbps,
-        const QString& codecLabel)
+        const QString& codecLabel,
+        bool viewOnly)
     : m_Window(window),
       m_OverlayManager(overlayManager),
       m_InputHandler(inputHandler),
@@ -93,7 +94,9 @@ PlankToolbar::PlankToolbar(
       m_PointerInside(false),
       m_PointerInitialized(false),
       m_LocalPointerInteraction(false),
+      m_ViewOnly(viewOnly),
       m_BitrateSupported(
+              !viewOnly &&
               (LiGetHostFeatureFlags() &
                (LI_FF_DYNAMIC_VIDEO_BITRATE | LI_FF_ENCODER_TARGET_ACK)) ==
               (LI_FF_DYNAMIC_VIDEO_BITRATE | LI_FF_ENCODER_TARGET_ACK)),
@@ -949,22 +952,36 @@ void PlankToolbar::redraw()
     painter.drawText(QRect(390, 3, 190, 17), Qt::AlignLeft | Qt::AlignVCenter,
                      QString("Encoder target  %1 Mbps").arg(m_BitrateKbps / 1000.0, 0, 'f', 1));
 
-    const int trackLeft = sliderLeft() - toolbarLeft();
-    const int trackRight = sliderRight() - toolbarLeft();
-    const int trackY = 27;
-    painter.setPen(QPen(QColor(92, 102, 114), 3, Qt::SolidLine, Qt::RoundCap));
-    painter.drawLine(trackLeft, trackY, trackRight, trackY);
-
-    const qreal fraction = qreal(m_BitrateKbps - BitrateMinimumKbps) /
-                           qreal(BitrateMaximumKbps - BitrateMinimumKbps);
-    const int thumbX = trackLeft + qRound(fraction * (trackRight - trackLeft));
-    if (m_BitrateSupported) {
-        painter.setPen(QPen(QColor(52, 132, 228), 3, Qt::SolidLine, Qt::RoundCap));
-        painter.drawLine(trackLeft, trackY, thumbX, trackY);
+    if (m_ViewOnly) {
+        // Watching someone else's session: say so where the slider would be.
+        const QRectF badge(390.0, 20.0, 150.0, 15.0);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(52, 132, 228));
+        painter.drawRoundedRect(badge, 3, 3);
+        QFont badgeFont = labelFont;
+        badgeFont.setPixelSize(10);
+        painter.setFont(badgeFont);
+        painter.setPen(QColor(255, 255, 255));
+        painter.drawText(badge, Qt::AlignCenter, "VIEW ONLY - watching");
     }
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(m_BitrateSupported ? QColor(243, 246, 250) : QColor(112, 120, 130));
-    painter.drawEllipse(QPointF(thumbX, trackY), 5, 5);
+    else {
+        const int trackLeft = sliderLeft() - toolbarLeft();
+        const int trackRight = sliderRight() - toolbarLeft();
+        const int trackY = 27;
+        painter.setPen(QPen(QColor(92, 102, 114), 3, Qt::SolidLine, Qt::RoundCap));
+        painter.drawLine(trackLeft, trackY, trackRight, trackY);
+
+        const qreal fraction = qreal(m_BitrateKbps - BitrateMinimumKbps) /
+                               qreal(BitrateMaximumKbps - BitrateMinimumKbps);
+        const int thumbX = trackLeft + qRound(fraction * (trackRight - trackLeft));
+        if (m_BitrateSupported) {
+            painter.setPen(QPen(QColor(52, 132, 228), 3, Qt::SolidLine, Qt::RoundCap));
+            painter.drawLine(trackLeft, trackY, thumbX, trackY);
+        }
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(m_BitrateSupported ? QColor(243, 246, 250) : QColor(112, 120, 130));
+        painter.drawEllipse(QPointF(thumbX, trackY), 5, 5);
+    }
 
     const QPointF fullscreenCenter(m_Width - 88.0, 19.0);
     const QRectF fullscreenRect(fullscreenCenter.x() - WindowButtonSize / 2.0,
@@ -1101,7 +1118,7 @@ void PlankToolbar::redraw()
                 disconnectCenter + QPointF(-disconnectHalfExtent,
                                             disconnectHalfExtent));
 
-    if (!m_BitrateSupported) {
+    if (!m_BitrateSupported && !m_ViewOnly) {
         QFont hintFont = labelFont;
         hintFont.setPixelSize(10);
         painter.setFont(hintFont);
