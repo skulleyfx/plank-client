@@ -303,6 +303,7 @@ HEADERS += \
     backend/desktopstage.h \
     backend/hostrecovery.h \
     backend/planksharedscreen.h \
+    backend/planksharedscreencontrol.h \
     backend/computermanager.h \
     backend/relaywakeclient.h \
     cli/commandlineparser.h \

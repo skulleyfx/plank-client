@@ -70,9 +70,11 @@ struct NvOutputTopology
     // so it is not part of SupportedFeatureFlags.
     static const int AdaptiveBitrateFeature = 0x1000000;
     // Shared screen: the host lets more clients watch the live session. The
-    // host advertises it only while shared_screen is on; the client sends it
-    // only on a viewer join, so like two screens it is a per-launch request
-    // and not part of SupportedFeatureFlags.
+    // host advertises it only while shared_screen is on. The client sends it
+    // on every launch to such a host, viewer or controller, meaning "this
+    // client understands shared-screen messages" (native event 6). It is
+    // only sent when the host advertised it, so it is not part of
+    // SupportedFeatureFlags.
     static const int SharedScreenFeature = 0x40000000;
     static const int FixedCaptureFlags = FixedCaptureFeature | OutputTopologyFeature |
             TopologyGenerationFeature | HostLayoutMetadataFeature | CompositeSourceRegionsFeature |

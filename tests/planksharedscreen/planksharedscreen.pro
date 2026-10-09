@@ -4,5 +4,6 @@ TEMPLATE = app
 
 SOURCES += test_planksharedscreen.cpp
 
-HEADERS += ../../app/backend/planksharedscreen.h
+HEADERS += ../../app/backend/planksharedscreen.h \
+           ../../app/backend/planksharedscreencontrol.h
 INCLUDEPATH += ../../app/backend

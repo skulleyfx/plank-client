@@ -79,6 +79,7 @@ static int plankIdentityGbrBitDepth(int profile)
 #define SDL_CODE_PLANK_CURSOR_POSITION 109
 #define SDL_CODE_PLANK_REPLANK_COMPLETE 110
 #define SDL_CODE_PLANK_CLIPBOARD_TEXT 111
+#define SDL_CODE_PLANK_SHARED_SCREEN 112
 
 #include <QtEndian>
 #include <QCoreApplication>
@@ -1556,6 +1557,32 @@ void Session::plankTransportDataReceiveLoop()
             }
             break;
         }
+        case PlankSharedScreenEvent: {
+            if (event.payload_size == 0 ||
+                    event.payload_size > PlankSharedScreen::MaxMessageBytes) {
+                LiNotifyPlankHostTermination(-1);
+                return;
+            }
+            if (!m_SharedScreenMessages.load()) {
+                // This launch never asked for them; act on none.
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "Ignoring a shared-screen message this session did not negotiate");
+                break;
+            }
+            // Parsed and applied on the main thread; a malformed or unknown
+            // message is ignored there, never a reason to end the stream.
+            {
+                QMutexLocker locker(&m_SharedScreenInboxLock);
+                m_SharedScreenInbox.append(QByteArray(
+                            reinterpret_cast<const char*>(event.payload),
+                            static_cast<int>(event.payload_size)));
+            }
+            SDL_Event sharedScreenEvent = {};
+            sharedScreenEvent.type = SDL_EVENT_USER;
+            sharedScreenEvent.user.code = SDL_CODE_PLANK_SHARED_SCREEN;
+            SDL_PushEvent(&sharedScreenEvent);
+            break;
+        }
         default:
             qWarning() << "Rejected unexpected native KyProto event type"
                        << event.type;
@@ -1642,6 +1669,68 @@ void Session::sendPendingClipboardFrames()
     m_PlankClipboardOutNext = 0;
 }
 #endif
+
+/**
+ * @brief Send one shared-screen message to the host on native event 6.
+ *
+ * Only for a session whose launch set the shared-screen bit; a host that
+ * never advertised it would end the stream on an unknown event.
+ */
+void Session::sendSharedScreenMessage(const QJsonObject& message)
+{
+#ifdef PLANK_TRANSPORT
+    const QString type = message.value(QStringLiteral("t")).toString();
+    if (!m_SharedScreenMessages.load() || m_PlankTransportEndpoint == nullptr) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Not sending shared-screen message %s: no shared-screen link",
+                    qPrintable(type));
+        return;
+    }
+    const QByteArray payload = PlankSharedScreen::encode(message);
+    if (payload.isEmpty() || payload.size() > PlankSharedScreen::MaxMessageBytes) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Not sending oversized shared-screen message %s",
+                    qPrintable(type));
+        return;
+    }
+    std::vector<unsigned char> packet(
+                PLANK_TRANSPORT_EVENT_HEADER_SIZE + static_cast<size_t>(payload.size()));
+    size_t packetSize = 0;
+    if (plank_transport_event_encode(
+                PlankSharedScreenEvent,
+                reinterpret_cast<const uint8_t*>(payload.constData()),
+                static_cast<size_t>(payload.size()),
+                packet.data(), packet.size(), &packetSize) != 0 ||
+            plank_transport_native_data_send(
+                m_PlankTransportEndpoint, packet.data(), packetSize) !=
+                PLANK_TRANSPORT_OK) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Failed to send shared-screen message %s",
+                    qPrintable(type));
+        return;
+    }
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "PLANK shared screen: sent %s", qPrintable(type));
+#else
+    Q_UNUSED(message)
+#endif
+}
+
+// Main thread: expire unanswered prompts and send what the user decided.
+void Session::serviceSharedScreen(Uint64 now)
+{
+    if (!m_SharedScreenMessages.load()) {
+        return;
+    }
+    m_SharedScreenPanel.tick(now);
+    // A reconnect replaces the endpoint; keep the messages until it is back.
+    if (!m_Reconnecting.load()) {
+        const QVector<QJsonObject> outbox = m_SharedScreenPanel.takeOutbox();
+        for (const QJsonObject& message : outbox) {
+            sendSharedScreenMessage(message);
+        }
+    }
+}
 
 int Session::plankTransportNativeControlSender(void* context, uint32_t type,
                                           uint32_t value1, uint32_t value2)
@@ -3164,6 +3253,7 @@ bool Session::startConnectionAsync(bool reconnecting,
             encodingMode = QStringLiteral("hevc-8-420-nvenc");
         }
         const auto startApp = [&]() {
+            m_SharedScreenMessages.store(false);
             if (macCapture) {
                 QString pin;
                 const NvOutputTopology topology = http->getOutputTopology(&pin);
@@ -3184,7 +3274,10 @@ bool Session::startConnectionAsync(bool reconnecting,
                 return;
             }
             // A viewer asks for neither two screens nor adaptive bitrate:
-            // both would change the controller's shared encoder.
+            // both would change the controller's shared encoder. A
+            // controller sets the shared-screen bit whenever the host
+            // offers it: it then understands the consent, watcher and
+            // control messages, so the host may ask it about viewers.
             const int launchFeatureFlags = m_JoinAsViewer ?
                         (m_Computer->plankFeatureFlags &
                          NvOutputTopology::SupportedFeatureFlags) |
@@ -3197,7 +3290,11 @@ bool Session::startConnectionAsync(bool reconnecting,
                             ((m_Preferences->plankAdaptiveBitrate &&
                               (m_Computer->plankFeatureFlags &
                                NvOutputTopology::AdaptiveBitrateFeature)) ?
-                                 NvOutputTopology::AdaptiveBitrateFeature : 0);
+                                 NvOutputTopology::AdaptiveBitrateFeature : 0) |
+                            (m_Computer->plankFeatureFlags &
+                             NvOutputTopology::SharedScreenFeature);
+            m_SharedScreenMessages.store(
+                        (launchFeatureFlags & NvOutputTopology::SharedScreenFeature) != 0);
             http->startApp(m_Computer->currentGameId != 0 ? "resume" : "launch",
                           m_App.id, &m_StreamConfig,
                           m_Preferences->playAudioOnHost,
@@ -4364,6 +4461,7 @@ void Session::execInternal()
                                          m_StreamConfig.width,
                                          m_StreamConfig.height);
     m_InputHandler->setViewOnly(m_JoinAsViewer);
+    m_SharedScreenPanel.setViewer(m_JoinAsViewer);
 
     m_ConnectionStartCancelled.store(false);
     AsyncConnectionStartThread asyncConnThread(this);
@@ -4805,6 +4903,34 @@ void Session::execInternal()
             }
             return true;
         }
+        case SDL_CODE_PLANK_SHARED_SCREEN: {
+            QVector<QByteArray> payloads;
+            {
+                QMutexLocker locker(&m_SharedScreenInboxLock);
+                payloads.swap(m_SharedScreenInbox);
+            }
+            const Uint64 now = SDL_GetTicks();
+            for (const QByteArray& payload : std::as_const(payloads)) {
+                PlankSharedScreen::HostMessage message;
+                if (!PlankSharedScreen::parseHostMessage(payload, message)) {
+                    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                                "Ignoring a malformed shared-screen message from the host");
+                    continue;
+                }
+                if (message.type == PlankSharedScreen::HostMessage::Unknown) {
+                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                "Ignoring unknown shared-screen message \"%s\"",
+                                qPrintable(message.name));
+                    continue;
+                }
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "PLANK shared screen: host sent %s",
+                            qPrintable(message.name));
+                m_SharedScreenPanel.handle(message, now);
+            }
+            serviceSharedScreen(now);
+            return true;
+        }
         default:
             return false;
         }
@@ -4856,6 +4982,7 @@ void Session::execInternal()
             earlyWaitingVisible = false;
         }
         pollLocalClipboard(SDL_GetTicks());
+        serviceSharedScreen(SDL_GetTicks());
 
         if (m_UseMultiDisplayPresentation && !twoScreenPictureSeen) {
             if (m_CurrentRenderedFps.load(std::memory_order_relaxed) > 0.0f) {

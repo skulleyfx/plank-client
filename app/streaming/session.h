@@ -17,6 +17,7 @@
 #include <opus_multistream.h>
 #include "settings/streamingpreferences.h"
 #include "backend/planksharedscreen.h"
+#include "backend/planksharedscreencontrol.h"
 #include "input/input.h"
 #include "video/decoder.h"
 #include "audio/renderers/renderer.h"
@@ -509,7 +510,13 @@ private:
     // go out on the input channel. Only with hosts that advertise
     // NvOutputTopology::ClipboardSyncFeature.
     static const std::uint16_t PlankClipboardTextEvent = 5;
+    // Shared screen consent, watchers and control hand-off: small JSON
+    // messages in both directions, only when this launch set the
+    // shared-screen feature bit (planksharedscreencontrol.h).
+    static const std::uint16_t PlankSharedScreenEvent = PlankSharedScreen::EventType;
     void pollLocalClipboard(Uint64 now);
+    void sendSharedScreenMessage(const QJsonObject& message);
+    void serviceSharedScreen(Uint64 now);
 #ifdef PLANK_TRANSPORT
     void sendPendingClipboardFrames();
 #endif
@@ -527,6 +534,14 @@ private:
     std::vector<std::vector<std::uint8_t>> m_PlankClipboardOutFrames;
     std::size_t m_PlankClipboardOutNext = 0;
 #endif
+    // Set when the launch told the host this client understands
+    // shared-screen messages; nothing on event 6 is acted on otherwise.
+    std::atomic_bool m_SharedScreenMessages {false};
+    // Host messages waiting for the main thread (filled by the data receiver).
+    QMutex m_SharedScreenInboxLock;
+    QVector<QByteArray> m_SharedScreenInbox;
+    // Prompts, watchers and control state; main thread only.
+    PlankSharedScreen::Panel m_SharedScreenPanel;
     QMutex m_PlankClipboardLock;
     QString m_PlankClipboardIncoming;
     QString m_PlankClipboardLastSeen;

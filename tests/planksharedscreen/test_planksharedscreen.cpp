@@ -1,6 +1,7 @@
 #include <QtTest>
 
 #include "planksharedscreen.h"
+#include "planksharedscreencontrol.h"
 
 using namespace PlankSharedScreen;
 
@@ -22,6 +23,22 @@ private slots:
     void viewerCountIsOptional();
     void viewerPolicyChangesNothing();
     void controllerPolicyIsUnchanged();
+    void parsesHostMessages();
+    void unknownHostMessagesAreNotErrors();
+    void rejectsMalformedHostMessages_data();
+    void rejectsMalformedHostMessages();
+    void encodesClientMessages();
+    void mapsViewerRefusals();
+    void joinPromptAllowsAndDenies();
+    void promptsQueueOneAtATime();
+    void unansweredPromptIsDenied();
+    void cancelClosesPromptWithoutAnswer();
+    void controlPromptAnswersControl();
+    void watchersListAndKick();
+    void controllerTakeBackBanner();
+    void viewerRequestsAndReleasesControl();
+    void viewerLosesControlWithReason();
+    void viewerIgnoresControllerMessages();
 };
 
 void TestPlankSharedScreen::parsesMode()
@@ -214,6 +231,343 @@ void TestPlankSharedScreen::controllerPolicyIsUnchanged()
     QVERIFY(policy.usesTwoScreens);
     QVERIFY(policy.requestsHostLayout);
     QVERIFY(policy.reconnectsAutomatically);
+}
+
+void TestPlankSharedScreen::parsesHostMessages()
+{
+    HostMessage message;
+    QVERIFY(parseHostMessage(R"({"t":"join_request","id":7,"account":"SKULLEY\\casey"})", message));
+    QCOMPARE(int(message.type), int(HostMessage::JoinRequest));
+    QCOMPARE(message.id, quint32(7));
+    QCOMPARE(message.account, QStringLiteral("SKULLEY\\casey"));
+
+    QVERIFY(parseHostMessage(R"({"t":"control_request","id":3,"account":"ana"})", message));
+    QCOMPARE(int(message.type), int(HostMessage::ControlRequest));
+    QCOMPARE(message.id, quint32(3));
+
+    QVERIFY(parseHostMessage(R"({"t":"request_cancel","id":4294967295})", message));
+    QCOMPARE(int(message.type), int(HostMessage::RequestCancel));
+    QCOMPARE(message.id, quint32(4294967295u));
+
+    QVERIFY(parseHostMessage(R"({"t":"watchers","viewers":[{"id":2,"account":"ana","control":true},{"id":5,"account":"bo","control":false}]})",
+                             message));
+    QCOMPARE(int(message.type), int(HostMessage::Watchers));
+    QCOMPARE(message.watchers.size(), 2);
+    QCOMPARE(message.watchers.at(0).id, quint32(2));
+    QVERIFY(message.watchers.at(0).control);
+    QCOMPARE(message.watchers.at(1).account, QStringLiteral("bo"));
+    QVERIFY(!message.watchers.at(1).control);
+
+    QVERIFY(parseHostMessage(R"({"t":"watchers","viewers":[]})", message));
+    QVERIFY(message.watchers.isEmpty());
+
+    QVERIFY(parseHostMessage(R"({"t":"control_state","has_control":false,"reason":"taken_back"})", message));
+    QCOMPARE(int(message.type), int(HostMessage::ControlState));
+    QVERIFY(!message.hasControl);
+    QCOMPARE(message.reason, QStringLiteral("taken_back"));
+    QVERIFY(parseHostMessage(R"({"t":"control_state","has_control":true})", message));
+    QVERIFY(message.hasControl);
+    QVERIFY(message.reason.isEmpty());
+}
+
+void TestPlankSharedScreen::unknownHostMessagesAreNotErrors()
+{
+    HostMessage message;
+    QVERIFY(parseHostMessage(R"({"t":"something_new","x":1})", message));
+    QCOMPARE(int(message.type), int(HostMessage::Unknown));
+    QCOMPARE(message.name, QStringLiteral("something_new"));
+
+    // Unknown messages change nothing.
+    Panel panel;
+    panel.handle(message, 0);
+    QVERIFY(panel.rows(0).isEmpty());
+    QVERIFY(panel.takeOutbox().isEmpty());
+}
+
+void TestPlankSharedScreen::rejectsMalformedHostMessages_data()
+{
+    QTest::addColumn<QByteArray>("payload");
+    QTest::newRow("empty") << QByteArray();
+    QTest::newRow("not json") << QByteArray("join_request");
+    QTest::newRow("array") << QByteArray(R"([{"t":"watchers"}])");
+    QTest::newRow("no type") << QByteArray(R"({"id":1})");
+    QTest::newRow("numeric type") << QByteArray(R"({"t":6})");
+    QTest::newRow("join without id") << QByteArray(R"({"t":"join_request","account":"a"})");
+    QTest::newRow("join zero id") << QByteArray(R"({"t":"join_request","id":0,"account":"a"})");
+    QTest::newRow("join negative id") << QByteArray(R"({"t":"join_request","id":-1,"account":"a"})");
+    QTest::newRow("join fractional id") << QByteArray(R"({"t":"join_request","id":1.5,"account":"a"})");
+    QTest::newRow("join huge id") << QByteArray(R"({"t":"join_request","id":4294967296,"account":"a"})");
+    QTest::newRow("join text id") << QByteArray(R"({"t":"join_request","id":"1","account":"a"})");
+    QTest::newRow("join without account") << QByteArray(R"({"t":"join_request","id":1})");
+    QTest::newRow("cancel without id") << QByteArray(R"({"t":"request_cancel"})");
+    QTest::newRow("watchers not a list") << QByteArray(R"({"t":"watchers","viewers":{}})");
+    QTest::newRow("watcher without id") << QByteArray(R"({"t":"watchers","viewers":[{"account":"a"}]})");
+    QTest::newRow("watcher text control") << QByteArray(R"({"t":"watchers","viewers":[{"id":1,"account":"a","control":"yes"}]})");
+    QTest::newRow("state without flag") << QByteArray(R"({"t":"control_state","reason":"granted"})");
+    QTest::newRow("state numeric flag") << QByteArray(R"({"t":"control_state","has_control":1})");
+    QTest::newRow("too large") << QByteArray(R"({"t":"join_request","id":1,"account":")") +
+                                  QByteArray(MaxMessageBytes, 'a') + QByteArray(R"("})");
+}
+
+void TestPlankSharedScreen::rejectsMalformedHostMessages()
+{
+    QFETCH(QByteArray, payload);
+    HostMessage message;
+    message.id = 99;
+    QVERIFY(!parseHostMessage(payload, message));
+    QCOMPARE(message.id, quint32(99));
+}
+
+void TestPlankSharedScreen::encodesClientMessages()
+{
+    QCOMPARE(encode(joinAnswer(7, true)), QByteArray(R"({"allow":true,"id":7,"t":"join_answer"})"));
+    QCOMPARE(encode(joinAnswer(4294967295u, false)),
+             QByteArray(R"({"allow":false,"id":4294967295,"t":"join_answer"})"));
+    QCOMPARE(encode(controlAnswer(3, false)), QByteArray(R"({"allow":false,"id":3,"t":"control_answer"})"));
+    QCOMPARE(encode(kick(12)), QByteArray(R"({"id":12,"t":"kick"})"));
+    QCOMPARE(encode(takeBack()), QByteArray(R"({"t":"take_back"})"));
+    QCOMPARE(encode(controlRequest()), QByteArray(R"({"t":"control_request"})"));
+    QCOMPARE(encode(controlRelease()), QByteArray(R"({"t":"control_release"})"));
+}
+
+void TestPlankSharedScreen::mapsViewerRefusals()
+{
+    QVERIFY(viewerRefusalText(QStringLiteral("The owner declined")).contains(QStringLiteral("declined")));
+    QVERIFY(viewerRefusalText(QStringLiteral("The owner did not answer")).contains(QStringLiteral("did not answer")));
+    QVERIFY(viewerRefusalText(QStringLiteral("The owner's client cannot approve viewers"))
+            .contains(QStringLiteral("update PLANK")));
+    QCOMPARE(viewerRefusalText(QStringLiteral("viewer limit reached")), QStringLiteral("viewer limit reached"));
+}
+
+static HostMessage hostMessage(const char* json)
+{
+    HostMessage message;
+    if (!parseHostMessage(QByteArray(json), message)) {
+        qFatal("bad test message %s", json);
+    }
+    return message;
+}
+
+void TestPlankSharedScreen::joinPromptAllowsAndDenies()
+{
+    Panel panel;
+    panel.handle(hostMessage(R"({"t":"join_request","id":7,"account":"casey"})"), 1000);
+    QVERIFY(panel.needsAttention());
+    QVector<Panel::Row> rows = panel.rows(1000);
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows.at(0).text, QStringLiteral("casey wants to watch your screen (30 s)"));
+    QCOMPARE(rows.at(0).buttons.size(), 2);
+    QCOMPARE(panel.rows(2500).at(0).text, QStringLiteral("casey wants to watch your screen (29 s)"));
+
+    panel.activate(rows.at(0).buttons.at(0), 3000);
+    QVector<QJsonObject> outbox = panel.takeOutbox();
+    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(outbox.at(0), joinAnswer(7, true));
+    QVERIFY(panel.rows(3000).isEmpty());
+    QVERIFY(!panel.needsAttention());
+
+    panel.handle(hostMessage(R"({"t":"join_request","id":8,"account":"ana"})"), 4000);
+    panel.activate(panel.rows(4000).at(0).buttons.at(1), 4000);
+    outbox = panel.takeOutbox();
+    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(outbox.at(0), joinAnswer(8, false));
+
+    // A stale button for a prompt that is gone does nothing.
+    panel.activate(rows.at(0).buttons.at(0), 5000);
+    QVERIFY(panel.takeOutbox().isEmpty());
+}
+
+void TestPlankSharedScreen::promptsQueueOneAtATime()
+{
+    Panel panel;
+    panel.handle(hostMessage(R"({"t":"join_request","id":1,"account":"a"})"), 0);
+    panel.handle(hostMessage(R"({"t":"join_request","id":2,"account":"b"})"), 100);
+    // A repeat of a waiting request is not queued twice.
+    panel.handle(hostMessage(R"({"t":"join_request","id":2,"account":"b"})"), 200);
+    QCOMPARE(panel.pendingPrompts(), 2);
+    QVector<Panel::Row> rows = panel.rows(100);
+    QCOMPARE(rows.size(), 1);
+    QVERIFY(rows.at(0).text.startsWith(QStringLiteral("a wants")));
+    QVERIFY(rows.at(0).text.endsWith(QStringLiteral("1 more waiting")));
+
+    panel.activate(rows.at(0).buttons.at(0), 500);
+    rows = panel.rows(500);
+    QCOMPARE(rows.size(), 1);
+    QVERIFY(rows.at(0).text.startsWith(QStringLiteral("b wants")));
+    QVERIFY(!rows.at(0).text.contains(QStringLiteral("more waiting")));
+}
+
+void TestPlankSharedScreen::unansweredPromptIsDenied()
+{
+    Panel panel;
+    panel.handle(hostMessage(R"({"t":"join_request","id":1,"account":"a"})"), 1000);
+    panel.handle(hostMessage(R"({"t":"control_request","id":2,"account":"b"})"), 20000);
+    panel.tick(30999);
+    QVERIFY(panel.takeOutbox().isEmpty());
+    panel.tick(31000);
+    QVector<QJsonObject> outbox = panel.takeOutbox();
+    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(outbox.at(0), joinAnswer(1, false));
+    // The queued request keeps its own deadline.
+    QCOMPARE(panel.rows(31000).at(0).text, QStringLiteral("b asks for your mouse and keyboard (19 s)"));
+    panel.tick(50000);
+    outbox = panel.takeOutbox();
+    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(outbox.at(0), controlAnswer(2, false));
+    QCOMPARE(panel.pendingPrompts(), 0);
+}
+
+void TestPlankSharedScreen::cancelClosesPromptWithoutAnswer()
+{
+    Panel panel;
+    panel.handle(hostMessage(R"({"t":"join_request","id":1,"account":"a"})"), 0);
+    panel.handle(hostMessage(R"({"t":"join_request","id":2,"account":"b"})"), 0);
+    panel.handle(hostMessage(R"({"t":"request_cancel","id":2})"), 10);
+    QCOMPARE(panel.pendingPrompts(), 1);
+    panel.handle(hostMessage(R"({"t":"request_cancel","id":1})"), 20);
+    QCOMPARE(panel.pendingPrompts(), 0);
+    panel.handle(hostMessage(R"({"t":"request_cancel","id":9})"), 30);
+    panel.tick(60000);
+    QVERIFY(panel.takeOutbox().isEmpty());
+    QVERIFY(panel.rows(60000).isEmpty());
+}
+
+void TestPlankSharedScreen::controlPromptAnswersControl()
+{
+    Panel panel;
+    panel.handle(hostMessage(R"({"t":"control_request","id":5,"account":"ana"})"), 0);
+    const QVector<Panel::Row> rows = panel.rows(0);
+    QCOMPARE(rows.at(0).text, QStringLiteral("ana asks for your mouse and keyboard (30 s)"));
+    panel.activate(rows.at(0).buttons.at(0), 10);
+    const QVector<QJsonObject> outbox = panel.takeOutbox();
+    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(outbox.at(0), controlAnswer(5, true));
+}
+
+void TestPlankSharedScreen::watchersListAndKick()
+{
+    Panel panel;
+    QVERIFY(panel.slot().label.isEmpty());
+    QVERIFY(!panel.takeRevealRequest());
+    panel.handle(hostMessage(R"({"t":"watchers","viewers":[{"id":2,"account":"ana","control":false},{"id":5,"account":"bo","control":true}]})"),
+                 0);
+    QCOMPARE(panel.watcherCount(), 2);
+    QVERIFY(panel.takeRevealRequest());
+    QVERIFY(!panel.takeRevealRequest());
+    QCOMPARE(panel.slot().label, QStringLiteral("2 watching"));
+    // The list is closed until the indicator is clicked.
+    QVERIFY(panel.rows(0).isEmpty());
+    panel.activate(panel.slot(), 0);
+    QVector<Panel::Row> rows = panel.rows(0);
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(rows.at(0).text, QStringLiteral("ana"));
+    QCOMPARE(rows.at(1).text, QStringLiteral("bo - has control"));
+    panel.activate(rows.at(1).buttons.at(0), 0);
+    const QVector<QJsonObject> outbox = panel.takeOutbox();
+    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(outbox.at(0), kick(5));
+
+    // Fewer watchers do not reveal the toolbar; none hides the indicator.
+    panel.handle(hostMessage(R"({"t":"watchers","viewers":[{"id":2,"account":"ana"}]})"), 0);
+    QVERIFY(!panel.takeRevealRequest());
+    QCOMPARE(panel.slot().label, QStringLiteral("1 watching"));
+    panel.handle(hostMessage(R"({"t":"watchers","viewers":[]})"), 0);
+    QVERIFY(panel.slot().label.isEmpty());
+    QVERIFY(panel.rows(0).isEmpty());
+}
+
+void TestPlankSharedScreen::controllerTakeBackBanner()
+{
+    Panel panel;
+    QVERIFY(panel.controllerHasControl());
+    panel.handle(hostMessage(R"({"t":"watchers","viewers":[{"id":5,"account":"bo","control":true}]})"), 0);
+    panel.handle(hostMessage(R"({"t":"control_state","has_control":false,"reason":"granted"})"), 0);
+    QVERIFY(!panel.controllerHasControl());
+    QVERIFY(panel.needsAttention());
+    const QVector<Panel::Row> rows = panel.rows(0);
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows.at(0).text, QStringLiteral("bo has control"));
+    QCOMPARE(rows.at(0).buttons.size(), 1);
+    panel.activate(rows.at(0).buttons.at(0), 0);
+    const QVector<QJsonObject> outbox = panel.takeOutbox();
+    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(outbox.at(0), takeBack());
+
+    panel.handle(hostMessage(R"({"t":"control_state","has_control":true,"reason":"taken_back"})"), 100);
+    QVERIFY(panel.controllerHasControl());
+    // Only a short notice is left, and it goes away.
+    QCOMPARE(panel.rows(100).size(), 1);
+    QVERIFY(panel.rows(100).at(0).buttons.isEmpty());
+    panel.tick(100 + NoticeMs);
+    QVERIFY(panel.rows(100 + NoticeMs).isEmpty());
+    QVERIFY(!panel.needsAttention());
+}
+
+void TestPlankSharedScreen::viewerRequestsAndReleasesControl()
+{
+    Panel panel;
+    panel.setViewer(true);
+    QCOMPARE(panel.slot().label, QStringLiteral("Request control"));
+    panel.activate(panel.slot(), 0);
+    QVector<QJsonObject> outbox = panel.takeOutbox();
+    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(outbox.at(0), controlRequest());
+    QCOMPARE(panel.slot().label, QStringLiteral("Requested..."));
+    QVERIFY(panel.slot().action == Panel::Action::None);
+    // Clicking a pending request again sends nothing.
+    panel.activate(Panel::Button {QStringLiteral("Request control"), Panel::Action::RequestControl, 0, false}, 10);
+    QVERIFY(panel.takeOutbox().isEmpty());
+    QVERIFY(!panel.viewerHasControl());
+
+    panel.handle(hostMessage(R"({"t":"control_state","has_control":true,"reason":"granted"})"), 100);
+    QVERIFY(panel.viewerHasControl());
+    QCOMPARE(panel.slot().label, QStringLiteral("Give back"));
+    panel.activate(panel.slot(), 200);
+    outbox = panel.takeOutbox();
+    QCOMPARE(outbox.size(), 1);
+    QCOMPARE(outbox.at(0), controlRelease());
+    // Input stops at once, before the host confirms.
+    QVERIFY(!panel.viewerHasControl());
+    panel.handle(hostMessage(R"({"t":"control_state","has_control":false,"reason":"released"})"), 300);
+    QVERIFY(!panel.viewerHasControl());
+    QVERIFY(panel.rows(300).isEmpty());
+    QCOMPARE(panel.slot().label, QStringLiteral("Request control"));
+}
+
+void TestPlankSharedScreen::viewerLosesControlWithReason()
+{
+    Panel panel;
+    panel.setViewer(true);
+    panel.activate(panel.slot(), 0);
+    panel.takeOutbox();
+    panel.handle(hostMessage(R"({"t":"control_state","has_control":false,"reason":"denied"})"), 100);
+    QCOMPARE(panel.slot().label, QStringLiteral("Request control"));
+    QCOMPARE(panel.rows(100).size(), 1);
+    QVERIFY(panel.rows(100).at(0).text.contains(QStringLiteral("declined")));
+
+    panel.handle(hostMessage(R"({"t":"control_state","has_control":true,"reason":"granted"})"), 200);
+    panel.handle(hostMessage(R"({"t":"control_state","has_control":false,"reason":"taken_back"})"), 300);
+    QVERIFY(!panel.viewerHasControl());
+    QCOMPARE(panel.rows(300).at(0).text, QStringLiteral("The owner took control back."));
+
+    // A request the host never answers stops showing as pending.
+    panel.tick(300 + NoticeMs);
+    panel.activate(panel.slot(), 10000);
+    panel.tick(10000 + ControlRequestTimeoutMs);
+    QCOMPARE(panel.slot().label, QStringLiteral("Request control"));
+}
+
+void TestPlankSharedScreen::viewerIgnoresControllerMessages()
+{
+    Panel panel;
+    panel.setViewer(true);
+    panel.handle(hostMessage(R"({"t":"join_request","id":1,"account":"a"})"), 0);
+    panel.handle(hostMessage(R"({"t":"watchers","viewers":[{"id":2,"account":"ana"}]})"), 0);
+    QCOMPARE(panel.pendingPrompts(), 0);
+    QCOMPARE(panel.watcherCount(), 0);
+    QVERIFY(panel.rows(0).isEmpty());
+    panel.tick(60000);
+    QVERIFY(panel.takeOutbox().isEmpty());
 }
 
 QTEST_GUILESS_MAIN(TestPlankSharedScreen)
