@@ -1729,6 +1729,8 @@ QString PlankToolbar::sharedScreenSignature(Uint64 now) const
         for (const PlankSharedScreen::Panel::Button& button : row.buttons) {
             signature += QLatin1Char('|');
             signature += button.label;
+            // A new prompt with the same text still needs fresh buttons.
+            signature += QString::number(button.promptSerial);
         }
     }
     return signature;

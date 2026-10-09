@@ -34,6 +34,9 @@ private slots:
     void unansweredPromptIsDenied();
     void cancelClosesPromptWithoutAnswer();
     void controlPromptAnswersControl();
+    void doubleClickDoesNotAnswerNextPrompt();
+    void cancelEndsOnlyTheMatchingKind();
+    void clicksRightAfterThePromptChangesAreIgnored();
     void watchersListAndKick();
     void controllerTakeBackBanner();
     void viewerRequestsAndReleasesControl();
@@ -248,6 +251,11 @@ void TestPlankSharedScreen::parsesHostMessages()
     QVERIFY(parseHostMessage(R"({"t":"request_cancel","id":4294967295})", message));
     QCOMPARE(int(message.type), int(HostMessage::RequestCancel));
     QCOMPARE(message.id, quint32(4294967295u));
+    QCOMPARE(int(message.cancelKind), int(HostMessage::CancelUnspecified));
+    QVERIFY(parseHostMessage(R"({"t":"request_cancel","id":2,"kind":"control"})", message));
+    QCOMPARE(int(message.cancelKind), int(HostMessage::CancelControl));
+    QVERIFY(parseHostMessage(R"({"t":"request_cancel","id":2,"kind":"later"})", message));
+    QCOMPARE(int(message.cancelKind), int(HostMessage::CancelUnspecified));
 
     QVERIFY(parseHostMessage(R"({"t":"watchers","viewers":[{"id":2,"account":"ana","control":true},{"id":5,"account":"bo","control":false}]})",
                              message));
@@ -300,6 +308,7 @@ void TestPlankSharedScreen::rejectsMalformedHostMessages_data()
     QTest::newRow("join text id") << QByteArray(R"({"t":"join_request","id":"1","account":"a"})");
     QTest::newRow("join without account") << QByteArray(R"({"t":"join_request","id":1})");
     QTest::newRow("cancel without id") << QByteArray(R"({"t":"request_cancel"})");
+    QTest::newRow("cancel numeric kind") << QByteArray(R"({"t":"request_cancel","id":1,"kind":1})");
     QTest::newRow("watchers not a list") << QByteArray(R"({"t":"watchers","viewers":{}})");
     QTest::newRow("watcher without id") << QByteArray(R"({"t":"watchers","viewers":[{"account":"a"}]})");
     QTest::newRow("watcher text control") << QByteArray(R"({"t":"watchers","viewers":[{"id":1,"account":"a","control":"yes"}]})");
@@ -367,7 +376,7 @@ void TestPlankSharedScreen::joinPromptAllowsAndDenies()
     QVERIFY(!panel.needsAttention());
 
     panel.handle(hostMessage(R"({"t":"join_request","id":8,"account":"ana"})"), 4000);
-    panel.activate(panel.rows(4000).at(0).buttons.at(1), 4000);
+    panel.activate(panel.rows(4000).at(0).buttons.at(1), 4500);
     outbox = panel.takeOutbox();
     QCOMPARE(int(outbox.size()), 1);
     QCOMPARE(outbox.at(0), joinAnswer(8, false));
@@ -438,10 +447,94 @@ void TestPlankSharedScreen::controlPromptAnswersControl()
     panel.handle(hostMessage(R"({"t":"control_request","id":5,"account":"ana"})"), 0);
     const QVector<Panel::Row> rows = panel.rows(0);
     QCOMPARE(rows.at(0).text, QStringLiteral("ana asks for your mouse and keyboard (30 s)"));
-    panel.activate(rows.at(0).buttons.at(0), 10);
+    panel.activate(rows.at(0).buttons.at(0), 500);
     const QVector<QJsonObject> outbox = panel.takeOutbox();
     QCOMPARE(int(outbox.size()), 1);
     QCOMPARE(outbox.at(0), controlAnswer(5, true));
+}
+
+void TestPlankSharedScreen::doubleClickDoesNotAnswerNextPrompt()
+{
+    Panel panel;
+    // Join request 1 and a control request from viewer 1: same id.
+    panel.handle(hostMessage(R"({"t":"join_request","id":1,"account":"casey"})"), 0);
+    panel.handle(hostMessage(R"({"t":"control_request","id":1,"account":"ana"})"), 100);
+    const Panel::Button allow = panel.rows(1000).at(0).buttons.at(0);
+    panel.activate(allow, 1000);
+    QVector<QJsonObject> outbox = panel.takeOutbox();
+    QCOMPARE(int(outbox.size()), 1);
+    QCOMPARE(outbox.at(0), joinAnswer(1, true));
+
+    // The second click of a double-click, and a late one, land on the
+    // control prompt now at the front but were drawn for the join prompt.
+    panel.activate(allow, 1100);
+    panel.activate(allow, 5000);
+    QVERIFY(panel.takeOutbox().isEmpty());
+    QCOMPARE(panel.pendingPrompts(), 1);
+
+    const Panel::Button next = panel.rows(5000).at(0).buttons.at(0);
+    QVERIFY(next != allow);
+    panel.activate(next, 5000);
+    outbox = panel.takeOutbox();
+    QCOMPARE(int(outbox.size()), 1);
+    QCOMPARE(outbox.at(0), controlAnswer(1, true));
+}
+
+void TestPlankSharedScreen::cancelEndsOnlyTheMatchingKind()
+{
+    // A join cancel only comes when the host's 30 s ran out.
+    Panel panel;
+    panel.handle(hostMessage(R"({"t":"join_request","id":1,"account":"casey"})"), 0);
+    panel.handle(hostMessage(R"({"t":"control_request","id":1,"account":"ana"})"), 10000);
+    panel.handle(hostMessage(R"({"t":"request_cancel","id":1})"), 29500);
+    QCOMPARE(panel.pendingPrompts(), 1);
+    QCOMPARE(panel.rows(29500).at(0).text,
+             QStringLiteral("ana asks for your mouse and keyboard (11 s)"));
+
+    // A fresh join prompt with the same id as a cancelled control request
+    // stays.
+    Panel second;
+    second.handle(hostMessage(R"({"t":"join_request","id":2,"account":"casey"})"), 0);
+    second.handle(hostMessage(R"({"t":"control_request","id":2,"account":"ana"})"), 100);
+    second.handle(hostMessage(R"({"t":"request_cancel","id":2})"), 2000);
+    QCOMPARE(second.pendingPrompts(), 1);
+    QVERIFY(second.rows(2000).at(0).text.startsWith(QStringLiteral("casey wants")));
+
+    // An explicit kind decides.
+    Panel third;
+    third.handle(hostMessage(R"({"t":"join_request","id":3,"account":"casey"})"), 0);
+    third.handle(hostMessage(R"({"t":"control_request","id":3,"account":"ana"})"), 100);
+    third.handle(hostMessage(R"({"t":"request_cancel","id":3,"kind":"join"})"), 2000);
+    QCOMPARE(third.pendingPrompts(), 1);
+    QVERIFY(third.rows(2000).at(0).text.startsWith(QStringLiteral("ana asks")));
+    third.handle(hostMessage(R"({"t":"request_cancel","id":3,"kind":"join"})"), 2100);
+    QCOMPARE(third.pendingPrompts(), 1);
+    third.handle(hostMessage(R"({"t":"request_cancel","id":3,"kind":"control"})"), 2200);
+    QCOMPARE(third.pendingPrompts(), 0);
+    QVERIFY(third.takeOutbox().isEmpty());
+}
+
+void TestPlankSharedScreen::clicksRightAfterThePromptChangesAreIgnored()
+{
+    Panel panel;
+    panel.handle(hostMessage(R"({"t":"join_request","id":4,"account":"casey"})"), 1000);
+    const Panel::Button deny = panel.rows(1000).at(0).buttons.at(1);
+    panel.activate(deny, 1000 + PromptDebounceMs - 1);
+    QVERIFY(panel.takeOutbox().isEmpty());
+    panel.activate(deny, 1000 + PromptDebounceMs);
+    const QVector<QJsonObject> outbox = panel.takeOutbox();
+    QCOMPARE(int(outbox.size()), 1);
+    QCOMPARE(outbox.at(0), joinAnswer(4, false));
+
+    // A prompt that moves to the front after a cancel is debounced too.
+    panel.handle(hostMessage(R"({"t":"join_request","id":5,"account":"a"})"), 2000);
+    panel.handle(hostMessage(R"({"t":"join_request","id":6,"account":"b"})"), 2000);
+    panel.handle(hostMessage(R"({"t":"request_cancel","id":5})"), 3000);
+    const Panel::Button allow = panel.rows(3000).at(0).buttons.at(0);
+    panel.activate(allow, 3100);
+    QVERIFY(panel.takeOutbox().isEmpty());
+    panel.activate(allow, 3400);
+    QCOMPARE(panel.takeOutbox().at(0), joinAnswer(6, true));
 }
 
 void TestPlankSharedScreen::watchersListAndKick()

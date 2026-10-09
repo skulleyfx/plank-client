@@ -30,6 +30,12 @@ constexpr quint64 AnswerTimeoutMs = 30000;
 constexpr quint64 NoticeMs = 6000;
 // A control request the host never answers stops showing as pending.
 constexpr quint64 ControlRequestTimeoutMs = 45000;
+// Clicks on Allow/Deny this soon after a different prompt took the front
+// are ignored, so a double-click cannot answer the next request.
+constexpr quint64 PromptDebounceMs = 400;
+// The host cancels a join request only when its own 30 s wait ran out; a
+// join prompt this close to its deadline is taken to be the one cancelled.
+constexpr quint64 JoinCancelSlackMs = 5000;
 
 struct Watcher {
     quint32 id = 0;
@@ -38,6 +44,12 @@ struct Watcher {
 };
 
 struct HostMessage {
+    // Which request a request_cancel ends, when the host says.
+    enum CancelKind {
+        CancelUnspecified,
+        CancelJoin,
+        CancelControl,
+    };
     enum Type {
         Unknown,
         JoinRequest,
@@ -54,6 +66,7 @@ struct HostMessage {
     QVector<Watcher> watchers;
     bool hasControl = false;
     QString reason;
+    CancelKind cancelKind = CancelUnspecified;
 };
 
 // Request and viewer ids are positive 32-bit integers.
@@ -110,8 +123,18 @@ inline bool parseHostMessage(const QByteArray& bytes, HostMessage& message)
     }
     else if (parsed.name == QLatin1String("request_cancel")) {
         parsed.type = HostMessage::RequestCancel;
-        if (!readId(object, parsed.id)) {
+        // "kind" ("join" or "control") is optional; hosts up to now leave
+        // it out and an unknown value counts as unspecified.
+        const QJsonValue kind = object.value(QStringLiteral("kind"));
+        if (!readId(object, parsed.id) ||
+                !(kind.isUndefined() || kind.isString())) {
             return false;
+        }
+        if (kind.toString() == QLatin1String("join")) {
+            parsed.cancelKind = HostMessage::CancelJoin;
+        }
+        else if (kind.toString() == QLatin1String("control")) {
+            parsed.cancelKind = HostMessage::CancelControl;
         }
     }
     else if (parsed.name == QLatin1String("watchers")) {
@@ -247,17 +270,29 @@ public:
         ReleaseControl,
     };
 
+    enum class PromptKind {
+        None,
+        Join,
+        Control,
+    };
+
     struct Button {
         QString label;
         Action action = Action::None;
         quint32 id = 0;
         // Drawn as the emphasised choice.
         bool primary = false;
+        // Allow/Deny only: the prompt this button was drawn for. Join
+        // request ids and viewer ids both start at 1, so the id alone does
+        // not say which prompt; the client-local serial does.
+        PromptKind promptKind = PromptKind::None;
+        quint64 promptSerial = 0;
 
         bool operator==(const Button& other) const
         {
             return action == other.action && id == other.id &&
-                    label == other.label;
+                    label == other.label && promptKind == other.promptKind &&
+                    promptSerial == other.promptSerial;
         }
         bool operator!=(const Button& other) const
         {
@@ -296,8 +331,8 @@ public:
             if (m_Viewer) {
                 return;
             }
-            const Prompt::Kind kind = message.type == HostMessage::JoinRequest ?
-                        Prompt::Join : Prompt::Control;
+            const PromptKind kind = message.type == HostMessage::JoinRequest ?
+                        PromptKind::Join : PromptKind::Control;
             for (Prompt& prompt : m_Prompts) {
                 if (prompt.kind == kind && prompt.id == message.id) {
                     // A repeat of a request already waiting for an answer.
@@ -307,6 +342,7 @@ public:
             }
             Prompt prompt;
             prompt.kind = kind;
+            prompt.serial = ++m_NextPromptSerial;
             prompt.id = message.id;
             prompt.account = message.account;
             // The host's own 30 seconds started when it sent this.
@@ -315,14 +351,7 @@ public:
             break;
         }
         case HostMessage::RequestCancel:
-            // Join and control requests share no id space guarantee, so a
-            // cancel ends any request with that id. The host only cancels
-            // requests it still holds open.
-            for (int index = static_cast<int>(m_Prompts.size()) - 1; index >= 0; --index) {
-                if (m_Prompts.at(index).id == message.id) {
-                    m_Prompts.remove(index);
-                }
-            }
+            cancel(message, now);
             break;
         case HostMessage::Watchers:
             if (m_Viewer) {
@@ -366,6 +395,7 @@ public:
         case HostMessage::Unknown:
             break;
         }
+        noteFront(now);
     }
 
     // Expire unanswered prompts (a refusal), notices and a stale request.
@@ -381,6 +411,7 @@ public:
                 now >= m_ControlRequestDeadline) {
             m_ViewerControl = ViewerControl::None;
         }
+        noteFront(now);
     }
 
     // What the toolbar shows under its main row, top to bottom.
@@ -393,7 +424,7 @@ public:
             const int seconds = static_cast<int>((remainingMs + 999) / 1000);
             Row row;
             row.attention = true;
-            row.text = prompt.kind == Prompt::Join ?
+            row.text = prompt.kind == PromptKind::Join ?
                         QStringLiteral("%1 wants to watch your screen (%2 s)") :
                         QStringLiteral("%1 asks for your mouse and keyboard (%2 s)");
             row.text = row.text.arg(displayName(prompt.account)).arg(seconds);
@@ -401,8 +432,10 @@ public:
                 row.text += QStringLiteral(" - %1 more waiting")
                         .arg(static_cast<int>(m_Prompts.size()) - 1);
             }
-            row.buttons.append(Button {QStringLiteral("Allow"), Action::Allow, prompt.id, true});
-            row.buttons.append(Button {QStringLiteral("Deny"), Action::Deny, prompt.id, false});
+            row.buttons.append(Button {QStringLiteral("Allow"), Action::Allow, prompt.id, true,
+                                       prompt.kind, prompt.serial});
+            row.buttons.append(Button {QStringLiteral("Deny"), Action::Deny, prompt.id, false,
+                                       prompt.kind, prompt.serial});
             rows.append(row);
         }
         if (!m_Viewer && !m_ControllerHasControl) {
@@ -459,8 +492,16 @@ public:
         switch (button.action) {
         case Action::Allow:
         case Action::Deny:
-            if (!m_Prompts.isEmpty() && m_Prompts.first().id == button.id) {
+            // Answer only the prompt this button was drawn for, and only once
+            // it has been at the front long enough to be read.
+            noteFront(now);
+            if (!m_Prompts.isEmpty() &&
+                    m_Prompts.first().serial == button.promptSerial &&
+                    m_Prompts.first().kind == button.promptKind &&
+                    m_Prompts.first().id == button.id &&
+                    now >= m_FrontSince + PromptDebounceMs) {
                 answer(button.action == Action::Allow);
+                noteFront(now);
             }
             break;
         case Action::TakeBack:
@@ -553,11 +594,9 @@ public:
 
 private:
     struct Prompt {
-        enum Kind {
-            Join,
-            Control,
-        };
-        Kind kind = Join;
+        PromptKind kind = PromptKind::Join;
+        // Client-local, never reused, so a stale button cannot match.
+        quint64 serial = 0;
         quint32 id = 0;
         QString account;
         quint64 deadline = 0;
@@ -599,9 +638,66 @@ private:
     void answer(bool allow)
     {
         const Prompt prompt = m_Prompts.takeFirst();
-        m_Outbox.append(prompt.kind == Prompt::Join ?
+        m_Outbox.append(prompt.kind == PromptKind::Join ?
                             joinAnswer(prompt.id, allow) :
                             controlAnswer(prompt.id, allow));
+    }
+
+    /**
+     * @brief End the prompt a request_cancel names, without answering it.
+     *
+     * The id alone is ambiguous: join request ids come from the host's join
+     * counter and control requests carry the viewer id, and both start at 1.
+     * The rule: an explicit "kind" decides. Otherwise, when only one kind has
+     * a prompt with that id, that one ends. When both do, the host cancels a
+     * join request only after its own 30 s ran out, so a join prompt within
+     * JoinCancelSlackMs of its deadline ends; else the control prompt ends
+     * (control requests are also cancelled by take back or the viewer
+     * leaving, at any time). At most one prompt ends per cancel.
+     */
+    void cancel(const HostMessage& message, quint64 now)
+    {
+        int joinIndex = -1;
+        int controlIndex = -1;
+        for (int index = 0; index < static_cast<int>(m_Prompts.size()); ++index) {
+            const Prompt& prompt = m_Prompts.at(index);
+            if (prompt.id != message.id) {
+                continue;
+            }
+            if (prompt.kind == PromptKind::Join && joinIndex < 0) {
+                joinIndex = index;
+            }
+            else if (prompt.kind == PromptKind::Control && controlIndex < 0) {
+                controlIndex = index;
+            }
+        }
+        int index = -1;
+        if (message.cancelKind == HostMessage::CancelJoin) {
+            index = joinIndex;
+        }
+        else if (message.cancelKind == HostMessage::CancelControl) {
+            index = controlIndex;
+        }
+        else if (joinIndex < 0 || controlIndex < 0) {
+            index = joinIndex >= 0 ? joinIndex : controlIndex;
+        }
+        else {
+            const quint64 deadline = m_Prompts.at(joinIndex).deadline;
+            index = now + JoinCancelSlackMs >= deadline ? joinIndex : controlIndex;
+        }
+        if (index >= 0) {
+            m_Prompts.remove(index);
+        }
+    }
+
+    // Remember when the front prompt last changed, for the click debounce.
+    void noteFront(quint64 now)
+    {
+        const quint64 serial = m_Prompts.isEmpty() ? 0 : m_Prompts.first().serial;
+        if (serial != m_FrontSerial) {
+            m_FrontSerial = serial;
+            m_FrontSince = now;
+        }
     }
 
     void setNotice(const QString& text, quint64 now)
@@ -618,6 +714,9 @@ private:
 
     bool m_Viewer = false;
     QVector<Prompt> m_Prompts;
+    quint64 m_NextPromptSerial = 0;
+    quint64 m_FrontSerial = 0;
+    quint64 m_FrontSince = 0;
     QVector<Watcher> m_Watchers;
     bool m_WatchersOpen = false;
     bool m_RevealRequested = false;
