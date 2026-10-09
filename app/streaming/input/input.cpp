@@ -264,6 +264,9 @@ void SdlInputHandler::setViewOnly(bool viewOnly)
         SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
                     "PLANK shared screen: local input reaches the host");
     }
+    if (m_Window != nullptr) {
+        updateWin32ViewerCursor(false);
+    }
 }
 
 void SdlInputHandler::setPresentationLayout(
@@ -1072,6 +1075,9 @@ void SdlInputHandler::updateWin32ViewerCursor(bool imageChanged)
     // Only a viewer in local cursor mode needs this: a controller's own
     // pointer is the host pointer, and an embedded cursor is in the video.
     if (!m_ViewOnly || !m_LocalCursorSupported) {
+        // A viewer handed the mouse and keyboard drives the host with its own
+        // pointer; drop the overlay so a stale host pointer is not left over.
+        m_Win32ViewerCursor.reset();
         return;
     }
     if (!m_Win32ViewerCursor) {
