@@ -21,6 +21,8 @@
 #include <QJsonObject>
 #include <QNetworkProxy>
 
+#include "plankcertificate.h"
+
 #define FAST_FAIL_TIMEOUT_MS 2000
 #define REQUEST_TIMEOUT_MS 5000
 #define LAUNCH_TIMEOUT_MS 120000
@@ -41,16 +43,12 @@ private:
     QString& m_Value;
 };
 
-bool isPlankCertificate(const QSslCertificate& certificate)
+bool isPlankCertificate(const QSslConfiguration& configuration)
 {
-    const auto alternativeNames = certificate.subjectAlternativeNames();
-    const QDateTime now = QDateTime::currentDateTimeUtc();
-    return !certificate.isNull() && certificate.isSelfSigned() &&
-            certificate.publicKey().algorithm() == QSsl::Rsa &&
-            certificate.publicKey().length() >= 3072 &&
-            !alternativeNames.values(QSsl::DnsEntry).isEmpty() &&
-            alternativeNames.values(QSsl::IpAddressEntry).isEmpty() &&
-            certificate.effectiveDate() <= now && certificate.expiryDate() > now;
+    QList<QSslCertificate> chain = configuration.peerCertificateChain();
+    // Some TLS backends report only the leaf; treat that as a one-certificate chain.
+    if (chain.isEmpty()) chain.append(configuration.peerCertificate());
+    return chain.first() == configuration.peerCertificate() && PlankCertificate::acceptedChain(chain);
 }
 
 QSslConfiguration plankSslConfiguration()
@@ -508,11 +506,12 @@ NvHTTP::getXmlString(QString xml,
 void NvHTTP::handleSslErrors(QNetworkReply* reply, const QList<QSslError>& errors)
 {
     const QSslCertificate certificate = reply->sslConfiguration().peerCertificate();
-    if (!isPlankCertificate(certificate)) {
+    if (!isPlankCertificate(reply->sslConfiguration())) {
         const auto alternativeNames = certificate.subjectAlternativeNames();
         qWarning() << "Rejecting a TLS certificate outside the PLANK profile"
                    << "null" << certificate.isNull()
                    << "selfSigned" << certificate.isSelfSigned()
+                   << "chain" << reply->sslConfiguration().peerCertificateChain().size()
                    << "keyAlgorithm" << certificate.publicKey().algorithm()
                    << "keyBits" << certificate.publicKey().length()
                    << "dnsSans" << alternativeNames.values(QSsl::DnsEntry).size()
@@ -524,6 +523,7 @@ void NvHTTP::handleSslErrors(QNetworkReply* reply, const QList<QSslError>& error
     for (const QSslError& error : errors) {
         switch (error.error()) {
         case QSslError::SelfSignedCertificate:
+        case QSslError::SelfSignedCertificateInChain:
         case QSslError::CertificateUntrusted:
         case QSslError::UnableToGetLocalIssuerCertificate:
         case QSslError::UnableToVerifyFirstCertificate:
@@ -599,7 +599,7 @@ QJsonObject NvHTTP::postPlankJson(QString command, const QJsonObject& body)
         throw QtNetworkReplyException(QNetworkReply::UnknownNetworkError, message);
     }
     const QSslConfiguration negotiatedSsl = negotiatedPlankTls(reply);
-    if (!isPlankCertificate(negotiatedSsl.peerCertificate()) ||
+    if (!isPlankCertificate(negotiatedSsl) ||
             negotiatedSsl.sessionProtocol() != QSsl::TlsV1_3) {
         delete reply;
         throw GfeHttpResponseException(401,
@@ -823,7 +823,9 @@ NvOutputTopology NvHTTP::prepareMacDisplay(const QString& mode, const QString& e
         throw GfeHttpResponseException(400, "Host does not support Mac desktop preparation");
     }
     const auto object = postPinnedMacJson(QStringLiteral("/plank/display"),
-        {{"schema_version", 2}, {"width", size.width()}, {"height", size.height()}, {"encoding_mode", encodingMode}}, pin);
+        // Schema 3 adds the backing scale; Windows always asks for 1:1 pixels.
+        {{"schema_version", 3}, {"width", size.width()}, {"height", size.height()}, {"scale", 1},
+         {"encoding_mode", encodingMode}}, pin);
     NvOutputTopology result;
     if (!NvOutputTopology::fromJson(object, result) ||
             !NvOutputTopology::isFixedCaptureHost(result.featureFlags) ||
@@ -871,7 +873,7 @@ QJsonObject NvHTTP::postPinnedMacJson(const QString& path, const QJsonObject& bo
     bool certificateChecked = false;
     auto matchesPin = [&pin](QNetworkReply* reply) {
         const auto ssl = negotiatedPlankTls(reply);
-        return isPlankCertificate(ssl.peerCertificate()) &&
+        return isPlankCertificate(ssl) &&
                 ssl.sessionProtocol() == QSsl::TlsV1_3 &&
                 ssl.peerCertificate().digest(QCryptographicHash::Sha256) == pin;
     };
@@ -1036,7 +1038,7 @@ NvHTTP::openConnection(QUrl baseUrl,
 
     const bool plankTls = baseUrl.scheme() == "https";
     const bool approvedCertificate = !plankTls ||
-            isPlankCertificate(negotiatedPlankTls(reply).peerCertificate());
+            isPlankCertificate(negotiatedPlankTls(reply));
     const bool approvedProtocol = !plankTls ||
             negotiatedPlankTls(reply).sessionProtocol() == QSsl::TlsV1_3;
     if (!approvedCertificate || !approvedProtocol) {

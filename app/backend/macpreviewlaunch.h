@@ -4,9 +4,14 @@
 #include <Limelight.h>
 #include <QByteArray>
 
-// Typed schema-2 preview only. Never reinterpret Linux's PLS1 launch response
-// or infer services from a platform name or a decoder's capabilities.
+// Typed schema-4 launch only: the oldest schema a PLANK 1.1 Mac host still
+// accepts without /plank/negotiate. Windows forwards no clipboard, microphone
+// or camera to a Mac host, so all three stay off. Never reinterpret Linux's
+// PLS1 launch response or infer services from a platform name or a decoder's
+// capabilities.
 namespace MacPreviewLaunch {
+
+constexpr int LaunchSchema = 4;
 
 inline QJsonObject request(const NvOutputTopology& topology, int bitrateKbps,
                            int udpPayloadSize)
@@ -16,11 +21,12 @@ inline QJsonObject request(const NvOutputTopology& topology, int bitrateKbps,
             !NvOutputTopology::fromJson(topology.toJson(), checked) ||
             bitrateKbps < 10000 || bitrateKbps > 150000 ||
             udpPayloadSize < 1200 || udpPayloadSize > 65527) return {};
-    return {{"schema_version", 2}, {"capture_generation", checked.generation},
+    return {{"schema_version", LaunchSchema}, {"capture_generation", checked.generation},
             {"capture_id", checked.outputs.first().id},
             {"width", checked.desktopWidth}, {"height", checked.desktopHeight},
             {"encoding_mode", checked.appleEncodingMode}, {"frame_rate", 60},
-            {"bitrate_kbps", bitrateKbps}, {"max_udp_payload_size", udpPayloadSize}};
+            {"bitrate_kbps", bitrateKbps}, {"max_udp_payload_size", udpPayloadSize},
+            {"clipboard", false}, {"microphone", false}};
 }
 
 struct Reply {
@@ -36,13 +42,14 @@ inline bool parseReply(const QJsonObject& object, const NvOutputTopology& topolo
     reply = {};
     if (request(topology, 10000, udpPayloadSize).isEmpty() ||
             approvedControlPort < 1 || approvedControlPort > 65535 ||
-            object.size() != 7 || object.value("schema_version") != QJsonValue(2) ||
+            object.size() != 7 || object.value("schema_version") != QJsonValue(LaunchSchema) ||
             object.value("state") != QJsonValue("connecting") ||
             object.value("udp_port") != QJsonValue(approvedControlPort) ||
             object.value("max_udp_payload_size") != QJsonValue(udpPayloadSize) ||
             object.value("capture") != topology.toJson().value("capture") ||
             object.value("services") != QJsonValue(QJsonObject {
-                {"audio", true}, {"input", true}, {"pen", "normalized"}, {"cursor", "embedded"}})) return false;
+                {"audio", true}, {"input", true}, {"pen", "normalized"}, {"cursor", "embedded"},
+                {"clipboard", false}, {"microphone", false}})) return false;
 
     const QString token = object.value("transport_token").toString();
     if (token.size() != 44) return false;
@@ -53,7 +60,7 @@ inline bool parseReply(const QJsonObject& object, const NvOutputTopology& topolo
     reply.configuration.structSize = sizeof(reply.configuration);
     reply.configuration.negotiatedVideoFormat = topology.appleEncodingMode == QLatin1String("hevc-10-444-videotoolbox") ?
                 VIDEO_FORMAT_H265_REXT10_444 : VIDEO_FORMAT_H265_MAIN10;
-    // Schema 2 explicitly supports normalized pen and PLD1 bitrate updates.
+    // Schema 2 and later explicitly support normalized pen and PLD1 bitrate updates.
     reply.configuration.hostFeatureFlags = LI_FF_DYNAMIC_VIDEO_BITRATE | LI_FF_ENCODER_TARGET_ACK | LI_FF_PEN_TOUCH_EVENTS;
     reply.configuration.sessionPort = static_cast<uint32_t>(approvedControlPort);
     reply.configuration.serviceFlags = PLANK_NATIVE_SERVICE_AUDIO | PLANK_NATIVE_SERVICE_INPUT;
