@@ -18,6 +18,9 @@ class LinuxWacomInput;
 class LinuxRawWacomInput;
 #endif
 class PlankWaylandCursor;
+#ifdef Q_OS_WIN32
+class PlankWin32Cursor;
+#endif
 
 class SdlInputHandler
 {
@@ -39,13 +42,13 @@ public:
      *
      * Nothing is captured or sent: no keyboard, mouse, pen or pasted text,
      * and the local pointer stays an ordinary system pointer. Where a native
-     * cursor surface exists (Wayland) the host's pointer is drawn at the
-     * host's position. Call before setWindow() for a viewer. It may change
-     * while streaming when the owner hands over the mouse and keyboard:
-     * leaving view-only lets keyboard and mouse through (capture resumes on
-     * the next click, or setCaptureActive()); entering it again releases
-     * held keys and the capture first. Pen, tablet and pasted text stay off
-     * for a viewer session throughout.
+     * cursor surface exists (Wayland, or a Windows overlay window) the host's
+     * pointer is drawn at the host's position. Call before setWindow() for a
+     * viewer. It may change while streaming when the owner hands over the
+     * mouse and keyboard: leaving view-only lets keyboard and mouse through
+     * (capture resumes on the next click, or setCaptureActive()); entering it
+     * again releases held keys and the capture first. Pen, tablet and pasted
+     * text stay off for a viewer session throughout.
      */
     void setViewOnly(bool viewOnly);
 
@@ -207,6 +210,10 @@ private:
         std::unique_ptr<PlankWaylandCursor> cursor;
     };
     std::vector<WaylandTabletCursorOutput> m_WaylandTabletCursorOutputs;
+#ifdef Q_OS_WIN32
+    // Shared-screen viewer only: draws the host pointer over the video.
+    std::unique_ptr<PlankWin32Cursor> m_Win32ViewerCursor;
+#endif
 
     void setCursorVisible(bool visible);
     void activateCompositorCursor();
@@ -218,6 +225,7 @@ private:
                                          int& x, int& y) const;
     void updateTabletCursorVisibility();
     bool hostCursorSurfaceVisible();
+    void updateWin32ViewerCursor(bool imageChanged);
     QSize streamDimensions() const;
     bool sendAbsoluteMousePosition(SDL_Window* window,
                                    int windowX, int windowY,

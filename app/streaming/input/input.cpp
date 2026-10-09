@@ -7,6 +7,10 @@
 #include "streaming/streamutils.h"
 #include "utils.h"
 
+#ifdef Q_OS_WIN32
+#include "streaming/plankwin32cursor.h"
+#endif
+
 #ifdef HAVE_LIBINPUT_TABLET
 #include "streaming/input/linuxwacom.h"
 #include "streaming/input/linuxrawwacom.h"
@@ -143,6 +147,9 @@ SdlInputHandler::~SdlInputHandler()
         output.cursor->dispatchPending();
     }
     m_WaylandTabletCursorOutputs.clear();
+#ifdef Q_OS_WIN32
+    m_Win32ViewerCursor.reset();
+#endif
 
     if (m_RemoteCursor != nullptr) {
         SDL_DestroyCursor(m_RemoteCursor);
@@ -274,6 +281,7 @@ void SdlInputHandler::setPresentationLayout(
     reconcileWaylandTabletCursorOutputs();
     updateTabletCursorVisibility();
     updatePointerRegionLock();
+    updateWin32ViewerCursor(false);
 }
 
 void SdlInputHandler::refreshWaylandTabletCursorParents()
@@ -454,6 +462,7 @@ void SdlInputHandler::applyPendingRemoteCursor()
         output.cursor->dispatchPending();
     }
     updateTabletCursorVisibility();
+    updateWin32ViewerCursor(true);
     if (isCaptureActive()) {
         setCursorVisible(!m_MouseWasInVideoRegion || m_RemoteCursorVisible);
     }
@@ -532,6 +541,7 @@ void SdlInputHandler::applyPendingRemoteCursorPosition()
     m_AppliedRemoteCursorPosition = position;
     m_AppliedRemoteCursorPositionValid = true;
     m_AppliedRemoteCursorPositionSequence = position.sequence;
+    updateWin32ViewerCursor(false);
     SDL_Window* targetWindow = nullptr;
     int x = 0;
     int y = 0;
@@ -699,6 +709,7 @@ void SdlInputHandler::resetRemoteCursorPositionEpoch()
         output.cursor->setVisible(false);
         output.cursor->dispatchPending();
     }
+    updateWin32ViewerCursor(false);
 
     SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
                 "Reset PLANK remote cursor position epoch for desktop reconnect");
@@ -1053,4 +1064,36 @@ bool SdlInputHandler::hostCursorSurfaceVisible()
     return m_TabletCursorActive && isCaptureActive() &&
             m_AppliedRemoteCursorPositionSequence >
                 m_TabletCursorActivationSequence;
+}
+
+void SdlInputHandler::updateWin32ViewerCursor(bool imageChanged)
+{
+#ifdef Q_OS_WIN32
+    // Only a viewer in local cursor mode needs this: a controller's own
+    // pointer is the host pointer, and an embedded cursor is in the video.
+    if (!m_ViewOnly || !m_LocalCursorSupported) {
+        return;
+    }
+    if (!m_Win32ViewerCursor) {
+        m_Win32ViewerCursor = PlankWin32Cursor::create(
+                    [this](SDL_Window*& window, int& x, int& y) {
+                        return hostCursorSurfaceVisible() &&
+                                mapRemoteCursorPositionToWindow(
+                                    m_AppliedRemoteCursorPosition,
+                                    window, x, y);
+                    });
+        imageChanged = true;
+    }
+    if (imageChanged && m_AppliedRemoteCursorValid) {
+        m_Win32ViewerCursor->setImage(
+                    m_AppliedRemoteCursor.pixels.data(),
+                    static_cast<int>(m_AppliedRemoteCursor.width),
+                    static_cast<int>(m_AppliedRemoteCursor.height),
+                    static_cast<int>(m_AppliedRemoteCursor.hotspotX),
+                    static_cast<int>(m_AppliedRemoteCursor.hotspotY));
+    }
+    m_Win32ViewerCursor->update();
+#else
+    Q_UNUSED(imageChanged);
+#endif
 }
