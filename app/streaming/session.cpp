@@ -1048,10 +1048,39 @@ bool Session::negotiatePlankTransportSession(quint16 sessionPort, QString& error
 
     packet.resize(PLANK_TRANSPORT_SETUP_MAX_PACKET_SIZE);
     packetSize = 0;
-    if (plank_transport_native_data_receive(
-                m_PlankTransportEndpoint, packet.data(), packet.size(),
-                &packetSize, 12000) != PLANK_TRANSPORT_OK) {
-        errorMessage = tr("The host did not complete native session negotiation.");
+    int receiveResult = PLANK_TRANSPORT_TIMEOUT;
+    if (m_JoinAsViewer) {
+        // The host holds a viewer's setup while it asks the person at the
+        // workstation (up to 30 seconds), so wait longer, and let Cancel end
+        // the wait.
+        constexpr Uint64 ViewerSetupTimeoutMs = 45000;
+        const Uint64 deadline = SDL_GetTicks() + ViewerSetupTimeoutMs;
+        m_WaitingForSessionCleanup.store(true);
+        emit sessionCleanupWaitChanged(true, tr("Waiting for the owner to allow..."));
+        while (receiveResult == PLANK_TRANSPORT_TIMEOUT &&
+               !m_ConnectionStartCancelled.load() &&
+               SDL_GetTicks() < deadline) {
+            receiveResult = plank_transport_native_data_receive(
+                        m_PlankTransportEndpoint, packet.data(), packet.size(),
+                        &packetSize, 250);
+        }
+        m_WaitingForSessionCleanup.store(false);
+        emit sessionCleanupWaitChanged(false, QString());
+        if (receiveResult == PLANK_TRANSPORT_TIMEOUT &&
+                m_ConnectionStartCancelled.load()) {
+            errorMessage = tr("You cancelled the request to watch.");
+            return false;
+        }
+    }
+    else {
+        receiveResult = plank_transport_native_data_receive(
+                    m_PlankTransportEndpoint, packet.data(), packet.size(),
+                    &packetSize, 12000);
+    }
+    if (receiveResult != PLANK_TRANSPORT_OK) {
+        errorMessage = m_JoinAsViewer ?
+                    tr("The workstation did not let you watch in time. Try again in a moment.") :
+                    tr("The host did not complete native session negotiation.");
         return false;
     }
 
@@ -1080,7 +1109,9 @@ bool Session::negotiatePlankTransportSession(quint16 sessionPort, QString& error
             responsePacket.type == PLANK_TRANSPORT_SETUP_ERROR) {
         const QString hostMessage = response.value(QStringLiteral("message")).toString();
         errorMessage = hostMessage.isEmpty() ?
-                    tr("The host rejected native session negotiation.") : hostMessage;
+                    tr("The host rejected native session negotiation.") :
+                    m_JoinAsViewer ?
+                        PlankSharedScreen::viewerRefusalText(hostMessage) : hostMessage;
         return false;
     }
 
@@ -3332,7 +3363,7 @@ bool Session::startConnectionAsync(bool reconnecting,
                            << e.toQString();
                 emit displayLaunchError(statusMessage.isEmpty() ?
                                             tr("Host returned error: %1").arg(e.toQString()) :
-                                            statusMessage);
+                                            PlankSharedScreen::viewerRefusalText(statusMessage));
                 return false;
             }
             const bool displayTransitionStarted =
@@ -4842,6 +4873,11 @@ void Session::execInternal()
                         *m_Preferences, m_PlankBitrateKbps,
                         plankVideoFormatLabel(m_ActiveVideoFormat),
                         m_JoinAsViewer));
+            if (m_SharedScreenMessages.load()) {
+                // Consent prompts, watchers and control hand-off.
+                m_PlankToolbar->setSharedScreen(&m_SharedScreenPanel,
+                                                m_Computer->name);
+            }
         }
     };
     if (!presentationMappingDeferred) {

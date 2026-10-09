@@ -5,9 +5,13 @@
 #include <memory>
 #include <QRectF>
 #include <QString>
+#include <QVector>
 
+#include "backend/planksharedscreencontrol.h"
 #include "planktoolbarlogic.h"
 
+class QPainter;
+class QFont;
 class StreamingPreferences;
 class SdlInputHandler;
 class PlankWaylandToolbar;
@@ -62,6 +66,19 @@ public:
     void notifyWindowChanged();
     void notifyFocusLost();
 
+    /**
+     * @brief Show shared-screen state from this panel (owned by the session).
+     *
+     * Adds a button to the main row (controller: "N watching"; viewer:
+     * Request control / Give back) and, below the main row, the owner's
+     * Allow/Deny prompts, the "has control - Take back" banner, the watcher
+     * list and short notices. The toolbar stays on screen while anything
+     * there needs an answer. Not called for hosts without shared screen.
+     *
+     * @param hostName Workstation name for the viewer's "CONTROLLING" badge.
+     */
+    void setSharedScreen(PlankSharedScreen::Panel* panel, const QString& hostName);
+
     bool observeMouseMotion(const SDL_MouseMotionEvent& event);
     Action handleMouseButton(const SDL_MouseButtonEvent& event);
     bool handleMouseWheel(const SDL_MouseWheelEvent& event);
@@ -80,6 +97,9 @@ private:
         ChoiceFullscreen,
         ChoiceWindowed,
         ChoiceTwoScreens,
+        // Shared screen: the main-row button and a button on a row below.
+        ShareSlot,
+        ShareButton,
     };
 
     void show(Uint64 now);
@@ -119,6 +139,18 @@ private:
     int toolbarLeft() const;
     int sliderLeft() const;
     int sliderRight() const;
+    // Main row plus the shared-screen rows below it.
+    int toolbarHeight() const;
+    int shareSlotWidth() const;
+    // Toolbar-relative rectangles of shared-screen buttons.
+    QRectF shareSlotRect() const;
+    QRectF shareButtonRect(int row, int button) const;
+    bool shareSlotContains(int x, int y) const;
+    bool shareButtonAt(int x, int y,
+                       PlankSharedScreen::Panel::Button& button) const;
+    void drawSharedScreen(QPainter& painter, const QFont& labelFont);
+    QString sharedScreenSignature(Uint64 now) const;
+    void updateSharedScreen(Uint64 now);
 
     SDL_Window* m_Window;
     Overlay::OverlayManager& m_OverlayManager;
@@ -184,4 +216,12 @@ private:
     Uint64 m_LastToolbarMoveDrawTime;
     Uint64 m_LastRedrawTime;
     Uint64 m_EdgeHoverStartTime;
+    // Shared screen; null when the host does not offer it.
+    PlankSharedScreen::Panel* m_SharedScreen = nullptr;
+    QString m_HostName;
+    // The rows as last drawn; hit tests use the same layout.
+    QVector<PlankSharedScreen::Panel::Row> m_ShareRows;
+    QString m_SharedScreenDrawn;
+    bool m_SharedScreenAttention = false;
+    PlankSharedScreen::Panel::Button m_PressedShareButton;
 };

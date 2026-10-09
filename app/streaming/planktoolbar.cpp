@@ -9,6 +9,7 @@
 #include <Limelight.h>
 #include <QColor>
 #include <QFont>
+#include <QFontMetrics>
 #include <QImage>
 #include <QPainter>
 #include <QPainterPath>
@@ -48,6 +49,12 @@ constexpr int ReconnectPromptHeight = 156;
 constexpr int ReconnectPromptNoButton = 0;
 constexpr int ReconnectPromptDisconnectButton = 1;
 constexpr int ReconnectPromptWaitButton = 2;
+// Shared screen: the main-row button, and the rows below the main row for
+// prompts, the take-back banner, the watcher list and notices.
+constexpr int ShareSlotWidth = 104;
+constexpr int ShareRowHeight = 30;
+constexpr int ShareButtonWidth = 86;
+constexpr int ShareButtonGap = 6;
 
 QColor interpolateColor(const QColor& start, const QColor& end, qreal fraction)
 {
@@ -287,6 +294,8 @@ PlankToolbar::Action PlankToolbar::update(
                     m_EdgeHoverStartTime != 0 ? 1 : 0);
     }
 
+    updateSharedScreen(now);
+
     if (m_Visible && !m_ButtonRouter.hasLocalButtons() &&
             !m_DraggingSlider && !m_PointerInside &&
             m_HideDeadline != 0 && now >= m_HideDeadline) {
@@ -400,7 +409,8 @@ void PlankToolbar::notifyWindowChanged()
                 SDL_GetWindowPixelDensity(m_Window),
                 m_WindowWidth, m_WindowHeight,
                 m_WindowPixelWidth, m_WindowPixelHeight);
-    m_Width = std::min(ToolbarPreferredWidth, std::max(m_WindowWidth, 1));
+    m_Width = std::min(ToolbarPreferredWidth + shareSlotWidth(),
+                       std::max(m_WindowWidth, 1));
     if (m_ToolbarLeft < 0) {
         m_ToolbarLeft = std::max(0, (m_WindowWidth - m_Width) / 2);
     } else {
@@ -417,7 +427,7 @@ void PlankToolbar::notifyWindowChanged()
     }
     if (m_WaylandToolbar) {
         m_WaylandToolbar->setLayout(m_WindowWidth, toolbarLeft(),
-                                    m_Width, ToolbarHeight);
+                                    m_Width, toolbarHeight());
     }
     if (m_WaylandReconnectPrompt) {
         m_WaylandReconnectPrompt->setLayoutAt(
@@ -453,7 +463,7 @@ void PlankToolbar::notifyWindowChanged()
                     PlankToolbarLogic::physicalExtent(
                         m_Width, m_PixelDensity),
                     PlankToolbarLogic::physicalExtent(
-                        ToolbarHeight, m_PixelDensity));
+                        toolbarHeight(), m_PixelDensity));
     }
 }
 
@@ -616,6 +626,10 @@ PlankToolbar::Action PlankToolbar::handlePointerButton(
 
     if (event.down) {
         m_PressedControl = controlAt(pointerX, pointerY);
+        m_PressedShareButton = PlankSharedScreen::Panel::Button {};
+        if (m_PressedControl == Control::ShareButton) {
+            shareButtonAt(pointerX, pointerY, m_PressedShareButton);
+        }
         if (m_PressedControl == Control::Handle) {
             m_DraggingToolbar = true;
             m_ToolbarDragOffsetX = pointerX - toolbarLeft();
@@ -684,6 +698,31 @@ PlankToolbar::Action PlankToolbar::handlePointerButton(
         case Control::Disconnect:
             action = Action::Disconnect;
             break;
+        case Control::ShareSlot:
+            if (m_SharedScreen != nullptr) {
+                const auto slot = m_SharedScreen->slot();
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "PLANK shared screen: toolbar %s clicked",
+                            qPrintable(slot.label));
+                m_SharedScreen->activate(slot, now);
+                redraw();
+            }
+            break;
+        case Control::ShareButton: {
+            // Act only when press and release hit the same button of the
+            // same request; the rows may have changed in between.
+            PlankSharedScreen::Panel::Button released;
+            if (m_SharedScreen != nullptr &&
+                    shareButtonAt(pointerX, pointerY, released) &&
+                    released == m_PressedShareButton) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "PLANK shared screen: %s clicked",
+                            qPrintable(released.label));
+                m_SharedScreen->activate(released, now);
+                redraw();
+            }
+            break;
+        }
         default:
             break;
         }
@@ -761,6 +800,9 @@ void PlankToolbar::hide()
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "PLANK toolbar auto-hidden");
     endLocalPointerInteraction();
     m_ModePickerOpen = false;
+    if (m_SharedScreen != nullptr) {
+        m_SharedScreen->closeWatchers();
+    }
     m_Visible = false;
     m_EdgeHoverStartTime = 0;
     m_PointerInside = false;
@@ -812,10 +854,21 @@ void PlankToolbar::endLocalPointerInteraction()
 
 void PlankToolbar::redraw()
 {
+    // The shared-screen rows decide the height, so take them first; hit
+    // tests use this same layout until the next redraw.
+    if (m_SharedScreen != nullptr) {
+        const Uint64 now = SDL_GetTicks();
+        m_ShareRows = m_SharedScreen->rows(now);
+        m_SharedScreenDrawn = sharedScreenSignature(now);
+    }
+    else {
+        m_ShareRows.clear();
+    }
+
     const int surfaceWidth = m_WaylandToolbar ? m_Width :
             PlankToolbarLogic::physicalExtent(m_Width, m_PixelDensity);
-    const int surfaceHeight = m_WaylandToolbar ? ToolbarHeight :
-            PlankToolbarLogic::physicalExtent(ToolbarHeight,
+    const int surfaceHeight = m_WaylandToolbar ? toolbarHeight() :
+            PlankToolbarLogic::physicalExtent(toolbarHeight(),
                                                        m_PixelDensity);
     SDL_Surface* surface = SDL_CreateSurface(
                 surfaceWidth, surfaceHeight, SDL_PIXELFORMAT_ARGB8888);
@@ -838,12 +891,12 @@ void PlankToolbar::redraw()
     }
     // Paint the background through the first pixel row so the toolbar meets
     // the physical top edge without an antialiased one-pixel gap.
-    painter.fillRect(QRect(0, 0, m_Width, ToolbarHeight),
+    painter.fillRect(QRect(0, 0, m_Width, toolbarHeight()),
                      QColor(22, 27, 34));
     painter.setPen(QPen(QColor(255, 255, 255, 42), 1));
     painter.setBrush(Qt::NoBrush);
     painter.drawRoundedRect(QRectF(0.5, 0.5, m_Width - 1.0,
-                                   ToolbarHeight - 1.0), 0, 0);
+                                   toolbarHeight() - 1.0), 0, 0);
 
     QFont labelFont;
     labelFont.setPixelSize(10);
@@ -954,15 +1007,25 @@ void PlankToolbar::redraw()
 
     if (m_ViewOnly) {
         // Watching someone else's session: say so where the slider would be.
-        const QRectF badge(390.0, 20.0, 150.0, 15.0);
+        // While the owner has handed over the mouse and keyboard, say that.
+        const bool controlling = m_SharedScreen != nullptr &&
+                m_SharedScreen->viewerHasControl();
+        const qreal badgeWidth = controlling ?
+                    std::max(150.0, shareSlotRect().left() - 398.0) : 150.0;
+        const QRectF badge(390.0, 20.0, badgeWidth, 15.0);
         painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(52, 132, 228));
+        painter.setBrush(controlling ? QColor(214, 120, 36) : QColor(52, 132, 228));
         painter.drawRoundedRect(badge, 3, 3);
         QFont badgeFont = labelFont;
         badgeFont.setPixelSize(10);
         painter.setFont(badgeFont);
         painter.setPen(QColor(255, 255, 255));
-        painter.drawText(badge, Qt::AlignCenter, "VIEW ONLY - watching");
+        painter.drawText(badge, Qt::AlignCenter,
+                         controlling ?
+                             QFontMetrics(badgeFont).elidedText(
+                                 QString("CONTROLLING - %1").arg(m_HostName),
+                                 Qt::ElideRight, qRound(badgeWidth) - 8) :
+                             QString("VIEW ONLY - watching"));
     }
     else {
         const int trackLeft = sliderLeft() - toolbarLeft();
@@ -1128,6 +1191,8 @@ void PlankToolbar::redraw()
                          "Live bitrate control unavailable");
     }
 
+    drawSharedScreen(painter, labelFont);
+
     painter.end();
     m_LastDrawnFps = m_RenderedFps;
     m_LastDrawnVideoMbps = m_VideoMbps;
@@ -1136,7 +1201,7 @@ void PlankToolbar::redraw()
     m_LastRedrawTime = SDL_GetTicks();
     if (m_WaylandToolbar) {
         m_WaylandToolbar->setLayout(m_WindowWidth, toolbarLeft(),
-                                    m_Width, ToolbarHeight);
+                                    m_Width, toolbarHeight());
         m_WaylandToolbar->present(image.copy());
         SDL_DestroySurface(surface);
     } else {
@@ -1365,7 +1430,7 @@ void PlankToolbar::nativePointerMotion(int parentX, int parentY)
         if (newLeft != m_ToolbarLeft) {
             m_ToolbarLeft = newLeft;
             m_WaylandToolbar->setLayout(m_WindowWidth, m_ToolbarLeft,
-                                        m_Width, ToolbarHeight);
+                                        m_Width, toolbarHeight());
             if (now >= m_LastToolbarMoveDrawTime + ToolbarMoveRedrawIntervalMs) {
                 redraw();
                 m_LastToolbarMoveDrawTime = now;
@@ -1467,7 +1532,7 @@ void PlankToolbar::queueBitrateRequest(Uint64 now, bool forceSend)
 bool PlankToolbar::contains(int x, int y) const
 {
     return x >= toolbarLeft() && x < toolbarLeft() + m_Width &&
-           y >= 0 && y < ToolbarHeight;
+           y >= 0 && y < toolbarHeight();
 }
 
 bool PlankToolbar::sliderContains(int x, int y) const
@@ -1526,9 +1591,16 @@ PlankToolbar::Control PlankToolbar::controlAt(int x, int y) const
     if (disconnectContains(x, y)) {
         return Control::Disconnect;
     }
+    PlankSharedScreen::Panel::Button shareButton;
+    if (shareButtonAt(x, y, shareButton)) {
+        return Control::ShareButton;
+    }
     if (m_ModePickerOpen) {
         // The picker sits over the slider; nothing underneath is clickable.
         return modeChoiceAt(x, y);
+    }
+    if (shareSlotContains(x, y)) {
+        return Control::ShareSlot;
     }
     if (sliderContains(x, y)) {
         return Control::Slider;
@@ -1588,5 +1660,220 @@ int PlankToolbar::sliderLeft() const
 
 int PlankToolbar::sliderRight() const
 {
-    return toolbarLeft() + std::max(247, m_Width - 113);
+    return toolbarLeft() + std::max(247, m_Width - 113 - shareSlotWidth());
+}
+
+void PlankToolbar::setSharedScreen(PlankSharedScreen::Panel* panel,
+                                   const QString& hostName)
+{
+    m_SharedScreen = panel;
+    m_HostName = hostName;
+    m_SharedScreenDrawn.clear();
+    // The main row gains the shared-screen button, so lay it out again.
+    notifyWindowChanged();
+    redraw();
+}
+
+/**
+ * @brief Keep the toolbar in step with the shared-screen panel.
+ *
+ * A prompt, the take-back banner or a notice keeps the toolbar on screen,
+ * even while the pointer is captured for the host; the toolbar is reachable
+ * then exactly as it is after an edge reveal. A new watcher shows it for the
+ * usual auto-hide time.
+ */
+void PlankToolbar::updateSharedScreen(Uint64 now)
+{
+    if (m_SharedScreen == nullptr) {
+        return;
+    }
+    const bool reveal = m_SharedScreen->takeRevealRequest();
+    const bool attention = m_SharedScreen->needsAttention();
+    if ((attention || reveal) && !m_Visible) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "PLANK toolbar shown for shared screen");
+        show(now);
+    }
+    if (attention) {
+        m_HideDeadline = 0;
+    }
+    else if (m_SharedScreenAttention && m_Visible && !m_PointerInside &&
+             !m_ButtonRouter.hasLocalButtons()) {
+        // Answered: auto-hide as usual from now on.
+        m_HideDeadline = m_Pinned ? 0 : now + AutoHideDelayMs;
+    }
+    m_SharedScreenAttention = attention;
+    if (sharedScreenSignature(now) != m_SharedScreenDrawn) {
+        redraw();
+    }
+}
+
+// Everything the shared-screen part of the toolbar shows, including the
+// countdown, so a change of any of it redraws the toolbar.
+QString PlankToolbar::sharedScreenSignature(Uint64 now) const
+{
+    if (m_SharedScreen == nullptr) {
+        return QString();
+    }
+    const PlankSharedScreen::Panel::Button slot = m_SharedScreen->slot();
+    QString signature = slot.label;
+    signature += slot.primary ? QLatin1Char('+') : QLatin1Char('-');
+    signature += slot.action == PlankSharedScreen::Panel::Action::None ?
+                QLatin1Char('0') : QLatin1Char('1');
+    signature += m_SharedScreen->viewerHasControl() ?
+                QLatin1Char('C') : QLatin1Char('V');
+    const QVector<PlankSharedScreen::Panel::Row> rows = m_SharedScreen->rows(now);
+    for (const PlankSharedScreen::Panel::Row& row : rows) {
+        signature += QLatin1Char('\n');
+        signature += row.text;
+        for (const PlankSharedScreen::Panel::Button& button : row.buttons) {
+            signature += QLatin1Char('|');
+            signature += button.label;
+        }
+    }
+    return signature;
+}
+
+void PlankToolbar::drawSharedScreen(QPainter& painter, const QFont& labelFont)
+{
+    if (m_SharedScreen == nullptr) {
+        return;
+    }
+
+    QFont buttonFont = labelFont;
+    buttonFont.setPixelSize(11);
+    const QPointF pointer(m_PointerX - toolbarLeft(), m_PointerY);
+    const auto drawButton = [&](const QRectF& rect,
+                                const PlankSharedScreen::Panel::Button& button,
+                                const QRectF& textRect) {
+        const bool enabled =
+                button.action != PlankSharedScreen::Panel::Action::None;
+        const bool hovered = enabled && m_LocalPointerInteraction &&
+                rect.contains(pointer);
+        painter.setPen(QPen(button.primary ? QColor(52, 132, 228) :
+                                             QColor(104, 116, 131), 1));
+        painter.setBrush(!enabled ? QColor(36, 42, 50) :
+                         button.primary ? (hovered ? QColor(74, 152, 240) :
+                                                     QColor(52, 132, 228)) :
+                         hovered ? QColor(68, 78, 90) : QColor(48, 57, 68));
+        painter.drawRoundedRect(rect, WindowButtonRadius, WindowButtonRadius);
+        painter.setFont(buttonFont);
+        painter.setPen(enabled ? QColor(246, 248, 250) : QColor(135, 143, 153));
+        painter.drawText(textRect, Qt::AlignCenter, button.label);
+    };
+
+    // Main-row button; the screen picker covers it while open.
+    const PlankSharedScreen::Panel::Button slot = m_SharedScreen->slot();
+    if (!slot.label.isEmpty() && !m_ModePickerOpen) {
+        const QRectF rect = shareSlotRect();
+        if (slot.action == PlankSharedScreen::Panel::Action::ToggleWatchers) {
+            // An eye before "N watching".
+            drawButton(rect, slot, rect.adjusted(18.0, 0.0, 0.0, 0.0));
+            const QPointF eye(rect.left() + 15.0, rect.center().y());
+            QPainterPath outline;
+            outline.moveTo(eye.x() - 7.0, eye.y());
+            outline.quadTo(eye.x(), eye.y() - 6.0, eye.x() + 7.0, eye.y());
+            outline.quadTo(eye.x(), eye.y() + 6.0, eye.x() - 7.0, eye.y());
+            painter.setPen(QPen(QColor(246, 248, 250), 1.2));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawPath(outline);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(246, 248, 250));
+            painter.drawEllipse(eye, 2.0, 2.0);
+        }
+        else {
+            drawButton(rect, slot, rect);
+        }
+    }
+
+    if (m_ShareRows.isEmpty()) {
+        return;
+    }
+    painter.setPen(QPen(QColor(255, 255, 255, 42), 1));
+    painter.drawLine(QPointF(1.0, ToolbarHeight + 0.5),
+                     QPointF(m_Width - 1.0, ToolbarHeight + 0.5));
+    QFont rowFont = labelFont;
+    rowFont.setPixelSize(12);
+    const QFontMetrics rowMetrics(rowFont);
+    for (int row = 0; row < m_ShareRows.size(); ++row) {
+        const PlankSharedScreen::Panel::Row& shareRow = m_ShareRows.at(row);
+        const qreal top = ToolbarHeight + 2.0 + row * ShareRowHeight;
+        if (shareRow.attention) {
+            // Waiting for the owner: amber, so it reads as a question.
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(64, 50, 22));
+            painter.drawRect(QRectF(1.0, top, m_Width - 2.0, ShareRowHeight));
+        }
+        const qreal textRight = shareRow.buttons.isEmpty() ?
+                    m_Width - 12.0 : shareButtonRect(row, 0).left() - 8.0;
+        const QRectF textRect(12.0, top, std::max(0.0, textRight - 12.0),
+                              ShareRowHeight);
+        painter.setFont(rowFont);
+        painter.setPen(shareRow.attention ? QColor(255, 222, 160) :
+                                            QColor(226, 232, 239));
+        painter.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
+                         rowMetrics.elidedText(shareRow.text, Qt::ElideRight,
+                                               qFloor(textRect.width())));
+        for (int button = 0; button < shareRow.buttons.size(); ++button) {
+            const QRectF rect = shareButtonRect(row, button);
+            drawButton(rect, shareRow.buttons.at(button), rect);
+        }
+    }
+}
+
+int PlankToolbar::toolbarHeight() const
+{
+    return ToolbarHeight + (m_ShareRows.isEmpty() ? 0 :
+                                static_cast<int>(m_ShareRows.size()) *
+                                    ShareRowHeight + 4);
+}
+
+int PlankToolbar::shareSlotWidth() const
+{
+    return m_SharedScreen != nullptr ? ShareSlotWidth : 0;
+}
+
+// Between the bitrate slider and the window buttons.
+QRectF PlankToolbar::shareSlotRect() const
+{
+    const qreal width = ShareSlotWidth - 8.0;
+    return QRectF(m_Width - 106.0 - width, 7.0, width, 25.0);
+}
+
+// Buttons sit at the right end of their row, in order.
+QRectF PlankToolbar::shareButtonRect(int row, int button) const
+{
+    const int count = row >= 0 && row < m_ShareRows.size() ?
+                static_cast<int>(m_ShareRows.at(row).buttons.size()) : 0;
+    const qreal right = m_Width - 12.0 -
+            (count - 1 - button) * (ShareButtonWidth + ShareButtonGap);
+    return QRectF(right - ShareButtonWidth,
+                  ToolbarHeight + 2.0 + row * ShareRowHeight + 4.0,
+                  ShareButtonWidth, ShareRowHeight - 8.0);
+}
+
+bool PlankToolbar::shareSlotContains(int x, int y) const
+{
+    return m_SharedScreen != nullptr &&
+            !m_SharedScreen->slot().label.isEmpty() &&
+            shareSlotRect().contains(QPointF(x - toolbarLeft(), y));
+}
+
+bool PlankToolbar::shareButtonAt(
+        int x, int y, PlankSharedScreen::Panel::Button& button) const
+{
+    if (m_SharedScreen == nullptr) {
+        return false;
+    }
+    const QPointF point(x - toolbarLeft(), y);
+    for (int row = 0; row < m_ShareRows.size(); ++row) {
+        const PlankSharedScreen::Panel::Row& shareRow = m_ShareRows.at(row);
+        for (int index = 0; index < shareRow.buttons.size(); ++index) {
+            if (shareButtonRect(row, index).contains(point)) {
+                button = shareRow.buttons.at(index);
+                return true;
+            }
+        }
+    }
+    return false;
 }
