@@ -40,7 +40,12 @@ public:
      * Nothing is captured or sent: no keyboard, mouse, pen or pasted text,
      * and the local pointer stays an ordinary system pointer. Where a native
      * cursor surface exists (Wayland) the host's pointer is drawn at the
-     * host's position. Call before setWindow().
+     * host's position. Call before setWindow() for a viewer. It may change
+     * while streaming when the owner hands over the mouse and keyboard:
+     * leaving view-only lets keyboard and mouse through (capture resumes on
+     * the next click, or setCaptureActive()); entering it again releases
+     * held keys and the capture first. Pen, tablet and pasted text stay off
+     * for a viewer session throughout.
      */
     void setViewOnly(bool viewOnly);
 
@@ -148,6 +153,9 @@ private:
     bool m_CompositorCursorRequestedVisible;
     bool m_TabletCursorActive;
     bool m_ViewOnly = false;
+    // Set once a session has been view-only; pen capture stays off.
+    bool m_ViewerSession = false;
+    bool m_UngrabComboEnabledBeforeViewOnly = false;
 
     QSet<short> m_KeysDown;
     bool m_FakeMouseCaptureActive;

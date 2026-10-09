@@ -227,13 +227,35 @@ void SdlInputHandler::setWindow(SDL_Window *window)
 
 void SdlInputHandler::setViewOnly(bool viewOnly)
 {
-    m_ViewOnly = viewOnly;
-    if (m_ViewOnly) {
+    if (viewOnly == m_ViewOnly) {
+        return;
+    }
+    if (viewOnly) {
+        if (m_Window != nullptr) {
+            // Control was handed back mid-stream: let go of everything held
+            // on the host and of the local pointer and keyboard while input
+            // still flows.
+            raiseAllKeys();
+            setCaptureActive(false);
+        }
+        m_ViewOnly = true;
+        m_ViewerSession = true;
         // These combos type into or grab the host, which a viewer never does.
+        m_UngrabComboEnabledBeforeViewOnly =
+                m_SpecialKeyCombos[KeyComboUngrabInput].enabled;
         m_SpecialKeyCombos[KeyComboPasteText].enabled = false;
         m_SpecialKeyCombos[KeyComboUngrabInput].enabled = false;
         SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
                     "PLANK view-only session: local input is not sent to the host");
+    }
+    else {
+        // A shared-screen viewer was given the mouse and keyboard. Pasting
+        // text stays off: clipboard never flows from a viewer.
+        m_ViewOnly = false;
+        m_SpecialKeyCombos[KeyComboUngrabInput].enabled =
+                m_UngrabComboEnabledBeforeViewOnly;
+        SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
+                    "PLANK shared screen: local input reaches the host");
     }
 }
 

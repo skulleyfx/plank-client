@@ -41,7 +41,9 @@ void SdlInputHandler::resetPenState()
 
 bool SdlInputHandler::isPenCaptureAvailable() const
 {
-    if (m_ViewOnly) {
+    if (m_ViewOnly || m_ViewerSession) {
+        // A viewer's pen never reaches the host as a pen, even with control;
+        // it moves the pointer like a mouse instead.
         return false;
     }
 #ifdef HAVE_LIBINPUT_TABLET

@@ -1761,6 +1761,32 @@ void Session::serviceSharedScreen(Uint64 now)
             sendSharedScreenMessage(message);
         }
     }
+
+    // A viewer's input reaches the desktop only while it holds control.
+    if (m_JoinAsViewer && m_InputHandler != nullptr) {
+        const bool hasControl = m_SharedScreenPanel.viewerHasControl();
+        if (hasControl != m_ViewerInputAllowed.load()) {
+            if (hasControl) {
+                m_ViewerInputAllowed.store(true);
+                m_InputHandler->setViewOnly(false);
+                // Take the pointer and keyboard now when this window has
+                // focus; otherwise the next click into the stream does.
+                if (m_Window != nullptr &&
+                        (SDL_GetWindowFlags(m_Window) & SDL_WINDOW_INPUT_FOCUS) != 0) {
+                    m_InputHandler->setCaptureActive(true);
+                }
+            }
+            else {
+                // Release held keys and the capture while input still flows,
+                // then stop sending.
+                m_InputHandler->setViewOnly(true);
+                m_ViewerInputAllowed.store(false);
+            }
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "PLANK shared screen: this viewer %s the mouse and keyboard",
+                        hasControl ? "now has" : "no longer has");
+        }
+    }
 }
 
 int Session::plankTransportNativeControlSender(void* context, uint32_t type,
@@ -1812,10 +1838,14 @@ int Session::plankTransportNativeInputSender(void* context, uint8_t type,
     if (context == nullptr || payload == nullptr || payloadLength == 0) {
         return PLANK_TRANSPORT_ERROR_INVALID_ARGUMENT;
     }
-    if (s_ActiveSession != nullptr && s_ActiveSession->m_JoinAsViewer) {
-        // View only: drop input and clipboard offers here as well as at their
-        // sources, so nothing a viewer does can reach the desktop. Report
-        // success so the input stream does not treat it as a failed link.
+    if (s_ActiveSession != nullptr && s_ActiveSession->m_JoinAsViewer &&
+            (type == PLANK_TRANSPORT_INPUT_CLIPBOARD_OFFER ||
+             !s_ActiveSession->m_ViewerInputAllowed.load())) {
+        // View only: drop input here as well as at its sources, so nothing a
+        // viewer does can reach the desktop until the owner hands over the
+        // mouse and keyboard. Clipboard offers never go out from a viewer.
+        // Report success so the input stream does not treat it as a failed
+        // link.
         return PLANK_TRANSPORT_OK;
     }
     return plank_transport_native_input_send(
@@ -4493,6 +4523,7 @@ void Session::execInternal()
                                          m_StreamConfig.height);
     m_InputHandler->setViewOnly(m_JoinAsViewer);
     m_SharedScreenPanel.setViewer(m_JoinAsViewer);
+    m_ViewerInputAllowed.store(false);
 
     m_ConnectionStartCancelled.store(false);
     AsyncConnectionStartThread asyncConnThread(this);

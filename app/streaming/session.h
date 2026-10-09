@@ -542,6 +542,10 @@ private:
     QVector<QByteArray> m_SharedScreenInbox;
     // Prompts, watchers and control state; main thread only.
     PlankSharedScreen::Panel m_SharedScreenPanel;
+    // Viewer only: true while the owner has handed this viewer the mouse and
+    // keyboard. Read by the input sender, which drops a viewer's input
+    // otherwise.
+    std::atomic_bool m_ViewerInputAllowed {false};
     QMutex m_PlankClipboardLock;
     QString m_PlankClipboardIncoming;
     QString m_PlankClipboardLastSeen;
