@@ -995,37 +995,61 @@ void PlankToolbar::redraw()
                      "Codec");
     painter.setFont(valueFont);
     painter.setPen(QColor(246, 248, 250));
-    painter.drawText(QRect(285, 16, 96, 17), Qt::AlignLeft | Qt::AlignVCenter,
-                     m_CodecLabel);
+    // A long codec name must not run into the column on its right.
+    painter.drawText(QRect(285, 16, 100, 17), Qt::AlignLeft | Qt::AlignVCenter,
+                     QFontMetrics(valueFont).elidedText(m_CodecLabel, Qt::ElideRight, 100));
+
+    // The column right of the stats: encoder target over the bitrate slider,
+    // or over the shared-screen badge. It ends before the shared-screen slot
+    // (or the window buttons), so nothing in it can cover the stats or the
+    // slot, however narrow the toolbar is.
+    const int columnLeft = 390;
+    const int columnRight = m_SharedScreen != nullptr ?
+                qFloor(shareSlotRect().left()) - 6 : m_Width - 113;
+    const int columnWidth = columnRight - columnLeft;
 
     QFont targetFont = labelFont;
-    targetFont.setPixelSize(12);
+    targetFont.setPixelSize(m_ViewOnly ? 11 : 12);
     painter.setFont(targetFont);
     painter.setPen(m_BitrateSupported ? QColor(235, 239, 244) : QColor(135, 143, 153));
-    painter.drawText(QRect(390, 3, 190, 17), Qt::AlignLeft | Qt::AlignVCenter,
-                     QString("Encoder target  %1 Mbps").arg(m_BitrateKbps / 1000.0, 0, 'f', 1));
+    if (columnWidth > 0) {
+        painter.drawText(QRect(columnLeft, m_ViewOnly ? 2 : 3, columnWidth, m_ViewOnly ? 15 : 17),
+                         Qt::AlignLeft | Qt::AlignVCenter,
+                         QFontMetrics(targetFont).elidedText(
+                             QString("Encoder target  %1 Mbps").arg(m_BitrateKbps / 1000.0, 0, 'f', 1),
+                             Qt::ElideRight, columnWidth));
+    }
 
     if (m_ViewOnly) {
         // Watching someone else's session: say so where the slider would be.
         // While the owner has handed over the mouse and keyboard, say that.
+        // The badge sits on its own row under the encoder target and is
+        // sized to the column, so it never overlaps any text.
         const bool controlling = m_SharedScreen != nullptr &&
                 m_SharedScreen->viewerHasControl();
-        const qreal badgeWidth = controlling ?
-                    std::max(150.0, shareSlotRect().left() - 398.0) : 150.0;
-        const QRectF badge(390.0, 20.0, badgeWidth, 15.0);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(controlling ? QColor(214, 120, 36) : QColor(52, 132, 228));
-        painter.drawRoundedRect(badge, 3, 3);
         QFont badgeFont = labelFont;
         badgeFont.setPixelSize(10);
-        painter.setFont(badgeFont);
-        painter.setPen(QColor(255, 255, 255));
-        painter.drawText(badge, Qt::AlignCenter,
-                         controlling ?
-                             QFontMetrics(badgeFont).elidedText(
-                                 QString("CONTROLLING - %1").arg(m_HostName),
-                                 Qt::ElideRight, qRound(badgeWidth) - 8) :
-                             QString("VIEW ONLY - watching"));
+        const QFontMetrics badgeMetrics(badgeFont);
+        const QString fullText = controlling ?
+                    QString("CONTROLLING - %1").arg(m_HostName) :
+                    QString("VIEW ONLY - watching");
+        const QString shortText = controlling ? QString("CONTROLLING") : QString("VIEW ONLY");
+        const int wanted = badgeMetrics.horizontalAdvance(fullText) + 12;
+        const int badgeWidth = std::min(columnWidth, std::max(wanted, 150));
+        if (badgeWidth >= badgeMetrics.horizontalAdvance(shortText) + 8) {
+            const QRectF badge(columnLeft, 19.0, badgeWidth, 15.0);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(controlling ? QColor(214, 120, 36) : QColor(52, 132, 228));
+            painter.drawRoundedRect(badge, 3, 3);
+            painter.setFont(badgeFont);
+            painter.setPen(QColor(255, 255, 255));
+            const int textRoom = badgeWidth - 8;
+            painter.drawText(badge, Qt::AlignCenter,
+                             badgeMetrics.horizontalAdvance(fullText) <= textRoom ? fullText :
+                             controlling && badgeMetrics.horizontalAdvance(shortText) < textRoom ?
+                                 badgeMetrics.elidedText(fullText, Qt::ElideRight, textRoom) :
+                                 shortText);
+        }
     }
     else {
         const int trackLeft = sliderLeft() - toolbarLeft();
