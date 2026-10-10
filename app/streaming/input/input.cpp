@@ -919,12 +919,27 @@ bool SdlInputHandler::mapRemoteCursorPositionToWindow(
         int windowWidth = 0;
         int windowHeight = 0;
         SDL_GetWindowSize(output.window, &windowWidth, &windowHeight);
+        QSize canvasSize = m_PresentationLayout.canvasSize;
+        QRect canvasRect = output.canvasRect;
+        if (m_PresentationLayout.outputs.size() == 1) {
+            // One window: its canvas is the window itself. The layout keeps
+            // the pixel size from when it was built, which goes stale after a
+            // windowed/fullscreen switch or a resize and would put the host
+            // pointer against the wrong letterbox. Use the current size.
+            int pixelWidth = 0;
+            int pixelHeight = 0;
+            if (SDL_GetWindowSizeInPixels(output.window, &pixelWidth, &pixelHeight) &&
+                    pixelWidth > 0 && pixelHeight > 0) {
+                canvasSize = QSize(pixelWidth, pixelHeight);
+                canvasRect = QRect(QPoint(0, 0), canvasSize);
+            }
+        }
         QPointF windowPoint;
         if (PlankPresentation::mapStreamPointToWindow(
                     streamPoint,
                     QSize(position.frameWidth, position.frameHeight),
-                    m_PresentationLayout.canvasSize,
-                    output.canvasRect,
+                    canvasSize,
+                    canvasRect,
                     QSize(windowWidth, windowHeight),
                     windowPoint)) {
             window = output.window;
