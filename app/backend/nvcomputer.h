@@ -122,6 +122,10 @@ public:
     QString plankHostVersion;
     bool plankStreamActive = false;
     QString plankSignedInUser;  // Only sent to admin-group accounts.
+    // serverinfo <PlankNdi> (unavailable | off | on | always; empty when the
+    // host does not send it) and <PlankNdiSource>. Authorized requests only.
+    QString plankNdi;
+    QString plankNdiSource;
     QString sessionToken;
     int plankTopologyVersion = 0;
     int plankFeatureFlags = 0;

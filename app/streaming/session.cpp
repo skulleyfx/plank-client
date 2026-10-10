@@ -837,6 +837,9 @@ Session::Session(NvComputer* computer, NvApp& app,
 
 Session::~Session()
 {
+    if (m_NdiThread.joinable()) {
+        m_NdiThread.join();
+    }
     stopPlankTransportDataPlane();
     clearPlankReconnectCredentials();
 }
@@ -1745,6 +1748,57 @@ void Session::sendSharedScreenMessage(const QJsonObject& message)
 #else
     Q_UNUSED(message)
 #endif
+}
+
+// Main thread: the NDI button's clicks and periodic refresh. The host call
+// blocks until it answers, so it runs on its own thread; the panel is the
+// only thing the two threads share.
+void Session::serviceNdi(Uint64 now)
+{
+    PlankNdi::Request request;
+    if (m_JoinAsViewer || !m_NdiPanel.takeRequest(now, request)) {
+        return;
+    }
+    if (m_NdiThread.joinable()) {
+        // The previous worker has already called finish(); this returns at once.
+        m_NdiThread.join();
+    }
+
+    NvAddress address;
+    QString token;
+    {
+        QReadLocker lock(&m_Computer->lock);
+        address = m_Computer->activeAddress;
+        token = m_Computer->sessionToken;
+    }
+
+    m_NdiThread = std::thread([this, request, address, token]() {
+        QString state;
+        QString source;
+        QString error;
+        bool ok = false;
+        try {
+            NvHTTP http(address);
+            http.setPlankSessionToken(token);
+            const QJsonObject result = http.plankNdi(
+                        request.kind == PlankNdi::Request::Switch ?
+                            PlankNdi::stateArgument(request.on) : QString());
+            state = result.value(QStringLiteral("state")).toString();
+            source = result.value(QStringLiteral("source")).toString();
+            ok = true;
+        } catch (const GfeHttpResponseException& e) {
+            error = PlankNdi::failureMessage(e.getStatusCode());
+        } catch (const QtNetworkReplyException& e) {
+            error = PlankNdi::failureMessage(NvHTTP::httpStatusForNetworkError(e.getError()));
+        }
+        if (request.kind == PlankNdi::Request::Switch) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "PLANK NDI switch %s: %s",
+                        request.on ? "on" : "off",
+                        ok ? qPrintable(state) : qPrintable(error));
+        }
+        m_NdiPanel.finish(request, ok, state, source, error, SDL_GetTicks());
+    });
 }
 
 // Main thread: expire unanswered prompts and send what the user decided.
@@ -4909,6 +4963,11 @@ void Session::execInternal()
                 m_PlankToolbar->setSharedScreen(&m_SharedScreenPanel,
                                                 m_Computer->name);
             }
+            if (!m_JoinAsViewer) {
+                // Shown only if the host reports PlankNdi = off or on.
+                m_NdiPanel.setHost(m_Computer->plankNdi, m_Computer->plankNdiSource);
+                m_PlankToolbar->setNdi(&m_NdiPanel);
+            }
         }
     };
     if (!presentationMappingDeferred) {
@@ -5050,6 +5109,7 @@ void Session::execInternal()
         }
         pollLocalClipboard(SDL_GetTicks());
         serviceSharedScreen(SDL_GetTicks());
+        serviceNdi(SDL_GetTicks());
 
         if (m_UseMultiDisplayPresentation && !twoScreenPictureSeen) {
             if (m_CurrentRenderedFps.load(std::memory_order_relaxed) > 0.0f) {

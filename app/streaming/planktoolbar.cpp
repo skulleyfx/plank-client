@@ -55,6 +55,11 @@ constexpr int ShareSlotWidth = 104;
 constexpr int ShareRowHeight = 30;
 constexpr int ShareButtonWidth = 86;
 constexpr int ShareButtonGap = 6;
+// NDI button on the main row, left of the shared-screen button. It is hidden
+// when the toolbar is too narrow to keep it clear of the stats.
+constexpr int NdiSlotWidth = 64;
+constexpr qreal NdiButtonWidth = 56.0;
+constexpr int NdiMinLeft = 392;
 
 QColor interpolateColor(const QColor& start, const QColor& end, qreal fraction)
 {
@@ -295,6 +300,7 @@ PlankToolbar::Action PlankToolbar::update(
     }
 
     updateSharedScreen(now);
+    updateNdi(now);
 
     if (m_Visible && !m_ButtonRouter.hasLocalButtons() &&
             !m_DraggingSlider && !m_PointerInside &&
@@ -409,7 +415,7 @@ void PlankToolbar::notifyWindowChanged()
                 SDL_GetWindowPixelDensity(m_Window),
                 m_WindowWidth, m_WindowHeight,
                 m_WindowPixelWidth, m_WindowPixelHeight);
-    m_Width = std::min(ToolbarPreferredWidth + shareSlotWidth(),
+    m_Width = std::min(ToolbarPreferredWidth + shareSlotWidth() + ndiSlotWidth(),
                        std::max(m_WindowWidth, 1));
     if (m_ToolbarLeft < 0) {
         m_ToolbarLeft = std::max(0, (m_WindowWidth - m_Width) / 2);
@@ -708,6 +714,15 @@ PlankToolbar::Action PlankToolbar::handlePointerButton(
                 redraw();
             }
             break;
+        case Control::NdiSlot:
+            if (m_Ndi != nullptr) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "PLANK toolbar NDI button clicked (NDI is %s)",
+                            m_Ndi->on() ? "on" : "off");
+                m_Ndi->requestToggle();
+                redraw();
+            }
+            break;
         case Control::ShareButton: {
             // Act only when press and release hit the same button of the
             // same request; the rows may have changed in between.
@@ -864,6 +879,14 @@ void PlankToolbar::redraw()
     else {
         m_ShareRows.clear();
     }
+    if (m_Ndi != nullptr) {
+        const Uint64 now = SDL_GetTicks();
+        m_NdiRowText = ndiRowText(now, &m_NdiRowError);
+        m_NdiDrawn = m_Ndi->signature(now) + QLatin1Char('#') + m_NdiRowText;
+    }
+    else {
+        m_NdiRowText.clear();
+    }
 
     const int surfaceWidth = m_WaylandToolbar ? m_Width :
             PlankToolbarLogic::physicalExtent(m_Width, m_PixelDensity);
@@ -1004,8 +1027,11 @@ void PlankToolbar::redraw()
     // (or the window buttons), so nothing in it can cover the stats or the
     // slot, however narrow the toolbar is.
     const int columnLeft = 390;
-    const int columnRight = m_SharedScreen != nullptr ?
+    int columnRight = m_SharedScreen != nullptr ?
                 qFloor(shareSlotRect().left()) - 6 : m_Width - 113;
+    if (ndiVisible()) {
+        columnRight = qFloor(ndiSlotRect().left()) - 6;
+    }
     const int columnWidth = columnRight - columnLeft;
 
     QFont targetFont = labelFont;
@@ -1216,6 +1242,7 @@ void PlankToolbar::redraw()
     }
 
     drawSharedScreen(painter, labelFont);
+    drawNdi(painter, labelFont);
 
     painter.end();
     m_LastDrawnFps = m_RenderedFps;
@@ -1626,6 +1653,9 @@ PlankToolbar::Control PlankToolbar::controlAt(int x, int y) const
     if (shareSlotContains(x, y)) {
         return Control::ShareSlot;
     }
+    if (ndiSlotContains(x, y)) {
+        return Control::NdiSlot;
+    }
     if (sliderContains(x, y)) {
         return Control::Slider;
     }
@@ -1684,7 +1714,8 @@ int PlankToolbar::sliderLeft() const
 
 int PlankToolbar::sliderRight() const
 {
-    return toolbarLeft() + std::max(247, m_Width - 113 - shareSlotWidth());
+    return toolbarLeft() + std::max(247, m_Width - 113 - shareSlotWidth() -
+                                              ndiSlotWidth());
 }
 
 void PlankToolbar::setSharedScreen(PlankSharedScreen::Panel* panel,
@@ -1847,11 +1878,16 @@ void PlankToolbar::drawSharedScreen(QPainter& painter, const QFont& labelFont)
     }
 }
 
+int PlankToolbar::shareBlockHeight() const
+{
+    return m_ShareRows.isEmpty() ? 0 :
+                static_cast<int>(m_ShareRows.size()) * ShareRowHeight + 4;
+}
+
 int PlankToolbar::toolbarHeight() const
 {
-    return ToolbarHeight + (m_ShareRows.isEmpty() ? 0 :
-                                static_cast<int>(m_ShareRows.size()) *
-                                    ShareRowHeight + 4);
+    return ToolbarHeight + shareBlockHeight() +
+            (m_NdiRowText.isEmpty() ? 0 : ShareRowHeight + 4);
 }
 
 int PlankToolbar::shareSlotWidth() const
@@ -1902,4 +1938,130 @@ bool PlankToolbar::shareButtonAt(
         }
     }
     return false;
+}
+
+void PlankToolbar::setNdi(PlankNdi::Panel* panel)
+{
+    m_Ndi = panel;
+    m_NdiShown = false;
+    m_NdiRowText.clear();
+    m_NdiDrawn.clear();
+}
+
+// The button is on the main row only while the host offers it and the
+// toolbar is wide enough that it stays clear of the stats and the slider.
+bool PlankToolbar::ndiVisible() const
+{
+    return m_Ndi != nullptr && m_NdiShown && !m_ViewOnly &&
+            ndiSlotRect().left() >= NdiMinLeft;
+}
+
+int PlankToolbar::ndiSlotWidth() const
+{
+    return m_Ndi != nullptr && m_NdiShown && !m_ViewOnly ? NdiSlotWidth : 0;
+}
+
+// Left of the shared-screen button, or of the window buttons without one.
+QRectF PlankToolbar::ndiSlotRect() const
+{
+    const qreal right = m_SharedScreen != nullptr ?
+                shareSlotRect().left() - 4.0 : m_Width - 106.0;
+    return QRectF(right - NdiButtonWidth, 7.0, NdiButtonWidth, 25.0);
+}
+
+bool PlankToolbar::ndiSlotContains(int x, int y) const
+{
+    return ndiVisible() &&
+            ndiSlotRect().contains(QPointF(x - toolbarLeft(), y));
+}
+
+// A short error after a refused click, else what the button does while the
+// pointer rests on it. It gets a row of its own under the main row, so it
+// never covers the stats.
+QString PlankToolbar::ndiRowText(Uint64 now, bool* isError) const
+{
+    if (isError != nullptr) {
+        *isError = false;
+    }
+    if (m_Ndi == nullptr || !ndiVisible()) {
+        return QString();
+    }
+    const QString notice = m_Ndi->notice(now);
+    if (!notice.isEmpty()) {
+        if (isError != nullptr) {
+            *isError = true;
+        }
+        return notice;
+    }
+    if (m_LocalPointerInteraction && ndiSlotContains(m_PointerX, m_PointerY)) {
+        return m_Ndi->tooltip();
+    }
+    return QString();
+}
+
+void PlankToolbar::updateNdi(Uint64 now)
+{
+    if (m_Ndi == nullptr) {
+        return;
+    }
+    const bool shown = m_Ndi->visible();
+    if (shown != m_NdiShown) {
+        // The main row gains or loses the button, so lay it out again.
+        m_NdiShown = shown;
+        notifyWindowChanged();
+        redraw();
+        return;
+    }
+    if (m_Visible &&
+            m_Ndi->signature(now) + QLatin1Char('#') + ndiRowText(now) != m_NdiDrawn) {
+        redraw();
+    }
+}
+
+void PlankToolbar::drawNdi(QPainter& painter, const QFont& labelFont)
+{
+    if (!ndiVisible() || m_Ndi == nullptr) {
+        return;
+    }
+
+    QFont buttonFont = labelFont;
+    buttonFont.setPixelSize(11);
+    const bool on = m_Ndi->on();
+    const bool pending = m_Ndi->pending();
+    const QPointF pointer(m_PointerX - toolbarLeft(), m_PointerY);
+
+    // Main-row button; the screen picker covers the area while open.
+    if (!m_ModePickerOpen) {
+        const QRectF rect = ndiSlotRect();
+        const bool hovered = m_LocalPointerInteraction && rect.contains(pointer);
+        painter.setPen(QPen(on ? QColor(52, 199, 110) : QColor(104, 116, 131), 1));
+        painter.setBrush(on ? (hovered ? QColor(40, 150, 88) : QColor(30, 125, 72)) :
+                         hovered ? QColor(68, 78, 90) : QColor(48, 57, 68));
+        painter.drawRoundedRect(rect, WindowButtonRadius, WindowButtonRadius);
+        painter.setFont(buttonFont);
+        painter.setPen(pending ? QColor(183, 191, 201) : QColor(246, 248, 250));
+        painter.drawText(rect, Qt::AlignCenter,
+                         pending ? QStringLiteral("NDI...") : m_Ndi->label());
+    }
+
+    if (m_NdiRowText.isEmpty()) {
+        return;
+    }
+    const qreal top = ToolbarHeight + shareBlockHeight();
+    painter.setPen(QPen(QColor(255, 255, 255, 42), 1));
+    painter.drawLine(QPointF(1.0, top + 0.5), QPointF(m_Width - 1.0, top + 0.5));
+    const QRectF rowRect(1.0, top + 1.0, m_Width - 2.0, ShareRowHeight + 2.0);
+    if (m_NdiRowError) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(64, 50, 22));
+        painter.drawRect(rowRect);
+    }
+    QFont rowFont = labelFont;
+    rowFont.setPixelSize(12);
+    painter.setFont(rowFont);
+    painter.setPen(m_NdiRowError ? QColor(255, 222, 160) : QColor(226, 232, 239));
+    const QRectF textRect = rowRect.adjusted(11.0, 0.0, -11.0, 0.0);
+    painter.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
+                     QFontMetrics(rowFont).elidedText(m_NdiRowText, Qt::ElideRight,
+                                                      qFloor(textRect.width())));
 }

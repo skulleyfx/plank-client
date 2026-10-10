@@ -721,6 +721,46 @@ QString NvHTTP::authenticate(QString username, QString password, bool* greeterCo
     throw GfeHttpResponseException(400, "PAM conversation exceeded the round limit");
 }
 
+QJsonObject NvHTTP::plankNdi(const QString& state)
+{
+    if (m_SessionToken.isEmpty()) {
+        throw GfeHttpResponseException(401, "Not signed in");
+    }
+    if (!state.isEmpty() && state != QLatin1String("on") && state != QLatin1String("off")) {
+        throw GfeHttpResponseException(400, "Invalid NDI state");
+    }
+    QScopedPointer<QNetworkReply> reply(openConnection(
+                m_BaseUrlHttps, "plank/ndi",
+                state.isEmpty() ? QString() : QStringLiteral("state=") + state,
+                REQUEST_TIMEOUT_MS, NvLogLevel::NVLL_VERBOSE));
+    const QByteArray body = reply->readAll();
+    const QJsonDocument document = QJsonDocument::fromJson(body);
+    if (!document.isObject()) {
+        // An authorization failure arrives as the GameStream XML envelope.
+        if (body.trimmed().startsWith('<')) {
+            verifyResponseStatus(QString::fromUtf8(body));
+        }
+        throw GfeHttpResponseException(400, "Malformed PLANK NDI response");
+    }
+    return document.object();
+}
+
+int NvHTTP::httpStatusForNetworkError(QNetworkReply::NetworkError error)
+{
+    switch (error) {
+    case QNetworkReply::AuthenticationRequiredError:
+        return 401;
+    case QNetworkReply::ContentAccessDenied:
+        return 403;
+    case QNetworkReply::ContentNotFoundError:
+        return 404;
+    case QNetworkReply::ContentConflictError:
+        return 409;
+    default:
+        return 0;
+    }
+}
+
 NvOutputTopology NvHTTP::getOutputTopology(QString* certificateSha256)
 {
     if (certificateSha256 != nullptr) certificateSha256->clear();

@@ -16,6 +16,7 @@
 #include <Limelight.h>
 #include <opus_multistream.h>
 #include "settings/streamingpreferences.h"
+#include "backend/plankndipanel.h"
 #include "backend/planksharedscreen.h"
 #include "backend/planksharedscreencontrol.h"
 #include "input/input.h"
@@ -517,6 +518,8 @@ private:
     void pollLocalClipboard(Uint64 now);
     void sendSharedScreenMessage(const QJsonObject& message);
     void serviceSharedScreen(Uint64 now);
+    // Main thread: send a queued NDI click, or a refresh, on a worker thread.
+    void serviceNdi(Uint64 now);
 #ifdef PLANK_TRANSPORT
     void sendPendingClipboardFrames();
 #endif
@@ -542,6 +545,11 @@ private:
     QVector<QByteArray> m_SharedScreenInbox;
     // Prompts, watchers and control state; main thread only.
     PlankSharedScreen::Panel m_SharedScreenPanel;
+    // The toolbar's NDI button (state is thread safe) and the one worker
+    // thread that talks to the host for it; joined before the next request
+    // and in the destructor.
+    PlankNdi::Panel m_NdiPanel;
+    std::thread m_NdiThread;
     // Viewer only: true while the owner has handed this viewer the mouse and
     // keyboard. Read by the input sender, which drops a viewer's input
     // otherwise.

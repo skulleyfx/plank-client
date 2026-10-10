@@ -1,10 +1,16 @@
 #include "computermodel.h"
 #include "backend/relaywakeclient.h"
+#include "backend/nvhttp.h"
+#include "backend/plankndipanel.h"
 #include "settings/plankclientpolicy.h"
 
 #include <utility>
 
+#include <QJsonObject>
+#include <QPointer>
 #include <QRegularExpression>
+#include <QRunnable>
+#include <QThreadPool>
 
 #ifndef PLANK_VERSION_STR
 #define PLANK_VERSION_STR "development"
@@ -100,6 +106,11 @@ QVariant ComputerModel::data(const QModelIndex& index, int role) const
         return computer->state == NvComputer::CS_ONLINE && computer->plankStreamActive;
     case SignedInUserRole:
         return computer->state == NvComputer::CS_ONLINE ? computer->plankSignedInUser : QString();
+    case NdiStateRole:
+        // Only while signed in to the host, which is when the endpoint accepts us.
+        return computer->state == NvComputer::CS_ONLINE &&
+                computer->authorizationState == NvComputer::AS_AUTHORIZED ?
+                    computer->plankNdi : QString();
     case ClientUpdateRole:
         return computer->plankHostMetadataVersion >= 1 && hostVersionIsNewer(computer->plankHostVersion);
     case AddressRole:
@@ -152,6 +163,7 @@ QHash<int, QByteArray> ComputerModel::roleNames() const
     names[InUseRole] = "inUse";
     names[SignedInUserRole] = "signedInUser";
     names[ClientUpdateRole] = "clientUpdateAvailable";
+    names[NdiStateRole] = "ndiState";
 
     return names;
 }
@@ -402,5 +414,97 @@ void ComputerModel::handleComputerStateChanged(NvComputer* computer)
         // Let the view know that this specific computer changed
         int index = m_Computers.indexOf(computer);
         emit dataChanged(createIndex(index, 0), createIndex(index, 0));
+    }
+}
+
+void ComputerModel::switchNdi(int computerIndex, bool on)
+{
+    if (computerIndex < 0 || computerIndex >= m_Computers.count()) {
+        return;
+    }
+
+    NvComputer* computer = m_Computers[computerIndex];
+    NvAddress address;
+    QString token;
+    {
+        QReadLocker lock(&computer->lock);
+        if (computer->state != NvComputer::CS_ONLINE ||
+                computer->authorizationState != NvComputer::AS_AUTHORIZED ||
+                computer->sessionToken.isEmpty()) {
+            emit ndiSwitchCompleted(tr("Sign in to this workstation first"));
+            return;
+        }
+        address = computer->activeAddress;
+        token = computer->sessionToken;
+    }
+    if (address.isNull()) {
+        emit ndiSwitchCompleted(tr("The workstation is not reachable"));
+        return;
+    }
+
+    // The request blocks until the host answers, so it runs off the UI thread.
+    QPointer<ComputerModel> self(this);
+    class Task : public QRunnable
+    {
+    public:
+        Task(QPointer<ComputerModel> model, NvComputer* computer,
+             NvAddress address, QString token, bool on) :
+            m_Model(std::move(model)), m_Computer(computer),
+            m_Address(std::move(address)), m_Token(std::move(token)), m_On(on) {}
+
+        void run() override
+        {
+            QString state;
+            QString source;
+            QString error;
+            try {
+                NvHTTP http(m_Address);
+                http.setPlankSessionToken(m_Token);
+                const QJsonObject result = http.plankNdi(PlankNdi::stateArgument(m_On));
+                state = result.value(QStringLiteral("state")).toString();
+                source = result.value(QStringLiteral("source")).toString();
+            } catch (const GfeHttpResponseException& e) {
+                error = PlankNdi::failureMessage(e.getStatusCode());
+            } catch (const QtNetworkReplyException& e) {
+                error = PlankNdi::failureMessage(NvHTTP::httpStatusForNetworkError(e.getError()));
+            }
+
+            QPointer<ComputerModel> model = m_Model;
+            NvComputer* computer = m_Computer;
+            if (model) {
+                QMetaObject::invokeMethod(model.data(), [model, computer, state, source, error]() {
+                    if (model) {
+                        model->finishNdiSwitch(computer, state, source, error);
+                    }
+                }, Qt::QueuedConnection);
+            }
+        }
+
+    private:
+        QPointer<ComputerModel> m_Model;
+        NvComputer* m_Computer;
+        NvAddress m_Address;
+        QString m_Token;
+        bool m_On;
+    };
+    QThreadPool::globalInstance()->start(new Task(self, computer, address, token, on));
+}
+
+void ComputerModel::finishNdiSwitch(NvComputer* computer, const QString& state,
+                                    const QString& source, const QString& error)
+{
+    const int row = m_Computers.indexOf(computer);
+    if (row >= 0 && error.isEmpty()) {
+        {
+            QWriteLocker lock(&computer->lock);
+            computer->plankNdi = state;
+            computer->plankNdiSource = source;
+        }
+        emit dataChanged(index(row), index(row), {NdiStateRole});
+    }
+    if (error.isEmpty()) {
+        emit ndiSwitchCompleted(QVariant());
+    } else {
+        emit ndiSwitchCompleted(error);
     }
 }

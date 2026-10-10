@@ -19,7 +19,8 @@ class ComputerModel : public QAbstractListModel
         AddressRole,
         InUseRole,
         SignedInUserRole,
-        ClientUpdateRole
+        ClientUpdateRole,
+        NdiStateRole
     };
 
 public:
@@ -45,6 +46,14 @@ public:
     Q_INVOKABLE void requestRelayWake(int computerIndex);
 
     bool relayWakeEnabled() const;
+
+    // Host tile menu: turn the host's NDI output on or off. Needs a signed-in
+    // session with that host; the answer arrives as ndiSwitchCompleted.
+    Q_INVOKABLE void switchNdi(int computerIndex, bool on);
+
+    // UI thread: the host answered a switchNdi request (not for QML).
+    void finishNdiSwitch(NvComputer* computer, const QString& state,
+                         const QString& source, const QString& error);
 
     Q_INVOKABLE Session* createSessionForPlankDesktop(int computerIndex);
 
@@ -84,6 +93,9 @@ signals:
     void authenticationProgress(QString message);
 
     void relayWakeCompleted(QVariant error);
+
+    // error is undefined on success, otherwise a short message.
+    void ndiSwitchCompleted(QVariant error);
 
 private slots:
     void handleComputerStateChanged(NvComputer* computer);

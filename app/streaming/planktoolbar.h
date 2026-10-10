@@ -7,6 +7,7 @@
 #include <QString>
 #include <QVector>
 
+#include "backend/plankndipanel.h"
 #include "backend/planksharedscreencontrol.h"
 #include "planktoolbarlogic.h"
 
@@ -79,6 +80,15 @@ public:
      */
     void setSharedScreen(PlankSharedScreen::Panel* panel, const QString& hostName);
 
+    /**
+     * @brief Show the host's NDI on/off button (owned by the session).
+     *
+     * The button appears on the main row, left of the shared-screen button,
+     * only while the panel says the host offers it (and never for a
+     * view-only viewer). A click is queued on the panel; the session sends it.
+     */
+    void setNdi(PlankNdi::Panel* panel);
+
     bool observeMouseMotion(const SDL_MouseMotionEvent& event);
     Action handleMouseButton(const SDL_MouseButtonEvent& event);
     bool handleMouseWheel(const SDL_MouseWheelEvent& event);
@@ -100,6 +110,8 @@ private:
         // Shared screen: the main-row button and a button on a row below.
         ShareSlot,
         ShareButton,
+        // The NDI on/off button.
+        NdiSlot,
     };
 
     void show(Uint64 now);
@@ -151,6 +163,16 @@ private:
     void drawSharedScreen(QPainter& painter, const QFont& labelFont);
     QString sharedScreenSignature(Uint64 now) const;
     void updateSharedScreen(Uint64 now);
+    // NDI button: the panel decides if it exists; the cached flag keeps the
+    // layout and hit tests the same as what was last drawn.
+    bool ndiVisible() const;
+    int ndiSlotWidth() const;
+    QRectF ndiSlotRect() const;
+    bool ndiSlotContains(int x, int y) const;
+    int shareBlockHeight() const;
+    QString ndiRowText(Uint64 now, bool* isError = nullptr) const;
+    void drawNdi(QPainter& painter, const QFont& labelFont);
+    void updateNdi(Uint64 now);
 
     SDL_Window* m_Window;
     Overlay::OverlayManager& m_OverlayManager;
@@ -224,4 +246,11 @@ private:
     QString m_SharedScreenDrawn;
     bool m_SharedScreenAttention = false;
     PlankSharedScreen::Panel::Button m_PressedShareButton;
+    // NDI button; null when the session has none.
+    PlankNdi::Panel* m_Ndi = nullptr;
+    bool m_NdiShown = false;
+    // The line under the main row (error or hover text) as last laid out.
+    QString m_NdiRowText;
+    bool m_NdiRowError = false;
+    QString m_NdiDrawn;
 };

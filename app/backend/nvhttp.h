@@ -158,6 +158,16 @@ public:
                          QString* resumeTicket = nullptr);
     bool probeWorkerReplacement(const QString& instance, const QString& certificateSha256);
     QString workerInstance() const { return m_WorkerInstance; }
+
+    // The host's optional NDI screen output. state is "on" or "off" to switch
+    // it, or empty to only ask. Returns the host's answer: {"state": "...",
+    // "source": "..."}. Needs the signed-in session token. Throws like the
+    // other requests; a refusal (403 not the desktop owner, 409 not available)
+    // surfaces as a QtNetworkReplyException.
+    QJsonObject plankNdi(const QString& state);
+
+    // The HTTP status a failed request most likely had, for messages; 0 when unknown.
+    static int httpStatusForNetworkError(QNetworkReply::NetworkError error);
     NvOutputTopology getOutputTopology(QString* certificateSha256 = nullptr);
     NvOutputTopology prepareMacDisplay(const QString& mode, const QString& encodingMode);
     MacPreviewLaunch::Reply startMacPreview(const NvOutputTopology& topology,

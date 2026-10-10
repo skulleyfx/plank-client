@@ -102,6 +102,12 @@ CenteredGridView {
                 errorDialog.open()
             }
         })
+        model.ndiSwitchCompleted.connect(function(error) {
+            if (error !== undefined) {
+                errorDialog.text = error
+                errorDialog.open()
+            }
+        })
         return model
     }
 
@@ -262,6 +268,15 @@ CenteredGridView {
                     visible: computerModel.relayWakeEnabled && model.manualBookmark &&
                              !model.statusUnknown && !model.online
                     onTriggered: computerModel.requestRelayWake(index)
+                }
+                NavigableMenuItem {
+                    // Only for a host that has NDI Tools and allows switching
+                    // (ndi_output = available), and only while signed in to it.
+                    parentMenu: pcContextMenu
+                    text: model.ndiState === "on" ? qsTr("Turn NDI off") : qsTr("Turn NDI on")
+                    visible: model.online && model.authorized &&
+                             (model.ndiState === "on" || model.ndiState === "off")
+                    onTriggered: computerModel.switchNdi(index, model.ndiState !== "on")
                 }
                 NavigableMenuItem {
                     parentMenu: pcContextMenu
