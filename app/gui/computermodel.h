@@ -51,9 +51,13 @@ public:
     // session with that host; the answer arrives as ndiSwitchCompleted.
     Q_INVOKABLE void switchNdi(int computerIndex, bool on);
 
+    // Host tile menu opened: read the host's NDI state when none is cached yet.
+    Q_INVOKABLE void refreshNdi(int computerIndex);
+
     // UI thread: the host answered a switchNdi request (not for QML).
     void finishNdiSwitch(NvComputer* computer, const QString& state,
-                         const QString& source, const QString& error);
+                         const QString& source, const QString& error,
+                         bool quiet = false);
 
     Q_INVOKABLE Session* createSessionForPlankDesktop(int computerIndex);
 
@@ -96,6 +100,9 @@ signals:
 
     // error is undefined on success, otherwise a short message.
     void ndiSwitchCompleted(QVariant error);
+
+private:
+    void startNdiRequest(int computerIndex, const QString& stateArgument, bool quiet);
 
 private slots:
     void handleComputerStateChanged(NvComputer* computer);

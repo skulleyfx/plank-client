@@ -19,6 +19,10 @@ private slots:
     void refreshWhenStale();
     void hostValuesDoNotOverrideARequestUnderWay();
     void failureMessages();
+    void firstLookIsImmediateEvenWhenHidden();
+    void hiddenHostIsPolledAndAppearsLive();
+    void notFoundStopsPollingQuietly();
+    void alwaysStopsPolling();
 };
 
 void TestPlankNdiPanel::onlyOffAndOnShowTheButton_data()
@@ -61,7 +65,10 @@ void TestPlankNdiPanel::clickQueuesOneSwitch()
     Request request;
     // Hidden: a click does nothing.
     panel.requestToggle();
-    QVERIFY(!panel.takeRequest(1000000, request));
+    QVERIFY(panel.takeRequest(1000000, request));
+    QCOMPARE(request.kind, Request::Refresh);  // only a look at the host
+    panel.finish(request, false, QString(), QString(), QString(), 1000000);
+    QVERIFY(!panel.takeRequest(1000001, request));
 
     panel.setHost(QStringLiteral("off"), QString());
     panel.requestToggle();
@@ -125,6 +132,8 @@ void TestPlankNdiPanel::refreshWhenStale()
     Panel panel;
     Request request;
     panel.setHost(QStringLiteral("on"), QString());
+    QVERIFY(panel.takeRequest(0, request));  // first look is immediate
+    panel.finish(request, true, QStringLiteral("on"), QString(), QString(), 0);
     QVERIFY(!panel.takeRequest(RefreshMs - 1, request));
     QVERIFY(panel.takeRequest(RefreshMs, request));
     panel.finish(request, true, QStringLiteral("off"), QString(), QString(), RefreshMs + 5);
@@ -153,6 +162,57 @@ void TestPlankNdiPanel::failureMessages()
     QVERIFY(!failureMessage(0).isEmpty());
     QCOMPARE(stateArgument(true), QStringLiteral("on"));
     QCOMPARE(stateArgument(false), QStringLiteral("off"));
+}
+
+void TestPlankNdiPanel::firstLookIsImmediateEvenWhenHidden()
+{
+    Panel panel;
+    Request request;
+    panel.setHost(QString(), QString());  // cached serverinfo had nothing
+    QVERIFY(!panel.visible());
+    QVERIFY(panel.takeRequest(5, request));
+    QCOMPARE(request.kind, Request::Refresh);
+    panel.finish(request, true, QStringLiteral("off"), QString(), QString(), 50);
+    QVERIFY(panel.visible());
+    // A click works straight away and is a switch to on.
+    panel.requestToggle();
+    QVERIFY(panel.takeRequest(60, request));
+    QCOMPARE(request.kind, Request::Switch);
+    QVERIFY(request.on);
+}
+
+void TestPlankNdiPanel::hiddenHostIsPolledAndAppearsLive()
+{
+    Panel panel;
+    Request request;
+    QVERIFY(panel.takeRequest(0, request));
+    panel.finish(request, true, QStringLiteral("unavailable"), QString(), QString(), 10);
+    QVERIFY(!panel.visible());
+    QVERIFY(!panel.takeRequest(10 + RefreshMs - 1, request));
+    QVERIFY(panel.takeRequest(10 + RefreshMs, request));
+    panel.finish(request, true, QStringLiteral("off"), QString(), QString(), 20 + RefreshMs);
+    QVERIFY(panel.visible());
+}
+
+void TestPlankNdiPanel::notFoundStopsPollingQuietly()
+{
+    Panel panel;
+    Request request;
+    QVERIFY(panel.takeRequest(0, request));
+    panel.finish(request, false, QString(), QString(), QStringLiteral("x"), 10, 404);
+    QVERIFY(!panel.visible());
+    QVERIFY(panel.notice(11).isEmpty());
+    QVERIFY(!panel.takeRequest(100 * RefreshMs, request));
+}
+
+void TestPlankNdiPanel::alwaysStopsPolling()
+{
+    Panel panel;
+    Request request;
+    QVERIFY(panel.takeRequest(0, request));
+    panel.finish(request, true, QStringLiteral("always"), QString(), QString(), 10);
+    QVERIFY(!panel.visible());
+    QVERIFY(!panel.takeRequest(100 * RefreshMs, request));
 }
 
 QTEST_GUILESS_MAIN(TestPlankNdiPanel)

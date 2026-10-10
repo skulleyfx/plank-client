@@ -419,6 +419,28 @@ void ComputerModel::handleComputerStateChanged(NvComputer* computer)
 
 void ComputerModel::switchNdi(int computerIndex, bool on)
 {
+    startNdiRequest(computerIndex, PlankNdi::stateArgument(on), false);
+}
+
+// Menu opened: if the cached serverinfo said nothing about NDI (it is only in
+// authorized serverinfo), ask the host once, quietly.
+void ComputerModel::refreshNdi(int computerIndex)
+{
+    if (computerIndex < 0 || computerIndex >= m_Computers.count()) {
+        return;
+    }
+    NvComputer* computer = m_Computers[computerIndex];
+    {
+        QReadLocker lock(&computer->lock);
+        if (!computer->plankNdi.isEmpty()) {
+            return;
+        }
+    }
+    startNdiRequest(computerIndex, QString(), true);
+}
+
+void ComputerModel::startNdiRequest(int computerIndex, const QString& stateArgument, bool quiet)
+{
     if (computerIndex < 0 || computerIndex >= m_Computers.count()) {
         return;
     }
@@ -431,14 +453,18 @@ void ComputerModel::switchNdi(int computerIndex, bool on)
         if (computer->state != NvComputer::CS_ONLINE ||
                 computer->authorizationState != NvComputer::AS_AUTHORIZED ||
                 computer->sessionToken.isEmpty()) {
-            emit ndiSwitchCompleted(tr("Sign in to this workstation first"));
+            if (!quiet) {
+                emit ndiSwitchCompleted(tr("Sign in to this workstation first"));
+            }
             return;
         }
         address = computer->activeAddress;
         token = computer->sessionToken;
     }
     if (address.isNull()) {
-        emit ndiSwitchCompleted(tr("The workstation is not reachable"));
+        if (!quiet) {
+            emit ndiSwitchCompleted(tr("The workstation is not reachable"));
+        }
         return;
     }
 
@@ -448,9 +474,10 @@ void ComputerModel::switchNdi(int computerIndex, bool on)
     {
     public:
         Task(QPointer<ComputerModel> model, NvComputer* computer,
-             NvAddress address, QString token, bool on) :
+             NvAddress address, QString token, QString stateArgument, bool quiet) :
             m_Model(std::move(model)), m_Computer(computer),
-            m_Address(std::move(address)), m_Token(std::move(token)), m_On(on) {}
+            m_Address(std::move(address)), m_Token(std::move(token)),
+            m_StateArgument(std::move(stateArgument)), m_Quiet(quiet) {}
 
         void run() override
         {
@@ -460,7 +487,7 @@ void ComputerModel::switchNdi(int computerIndex, bool on)
             try {
                 NvHTTP http(m_Address);
                 http.setPlankSessionToken(m_Token);
-                const QJsonObject result = http.plankNdi(PlankNdi::stateArgument(m_On));
+                const QJsonObject result = http.plankNdi(m_StateArgument);
                 state = result.value(QStringLiteral("state")).toString();
                 source = result.value(QStringLiteral("source")).toString();
             } catch (const GfeHttpResponseException& e) {
@@ -471,10 +498,11 @@ void ComputerModel::switchNdi(int computerIndex, bool on)
 
             QPointer<ComputerModel> model = m_Model;
             NvComputer* computer = m_Computer;
+            const bool quiet = m_Quiet;
             if (model) {
-                QMetaObject::invokeMethod(model.data(), [model, computer, state, source, error]() {
+                QMetaObject::invokeMethod(model.data(), [model, computer, state, source, error, quiet]() {
                     if (model) {
-                        model->finishNdiSwitch(computer, state, source, error);
+                        model->finishNdiSwitch(computer, state, source, error, quiet);
                     }
                 }, Qt::QueuedConnection);
             }
@@ -485,13 +513,15 @@ void ComputerModel::switchNdi(int computerIndex, bool on)
         NvComputer* m_Computer;
         NvAddress m_Address;
         QString m_Token;
-        bool m_On;
+        QString m_StateArgument;
+        bool m_Quiet;
     };
-    QThreadPool::globalInstance()->start(new Task(self, computer, address, token, on));
+    QThreadPool::globalInstance()->start(new Task(self, computer, address, token, stateArgument, quiet));
 }
 
 void ComputerModel::finishNdiSwitch(NvComputer* computer, const QString& state,
-                                    const QString& source, const QString& error)
+                                    const QString& source, const QString& error,
+                                    bool quiet)
 {
     const int row = m_Computers.indexOf(computer);
     if (row >= 0 && error.isEmpty()) {
@@ -501,6 +531,9 @@ void ComputerModel::finishNdiSwitch(NvComputer* computer, const QString& state,
             computer->plankNdiSource = source;
         }
         emit dataChanged(index(row), index(row), {NdiStateRole});
+    }
+    if (quiet) {
+        return;  // a background look; no dialog either way
     }
     if (error.isEmpty()) {
         emit ndiSwitchCompleted(QVariant());

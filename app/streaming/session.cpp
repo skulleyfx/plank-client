@@ -1777,6 +1777,7 @@ void Session::serviceNdi(Uint64 now)
         QString source;
         QString error;
         bool ok = false;
+        int status = 0;
         try {
             NvHTTP http(address);
             http.setPlankSessionToken(token);
@@ -1787,9 +1788,11 @@ void Session::serviceNdi(Uint64 now)
             source = result.value(QStringLiteral("source")).toString();
             ok = true;
         } catch (const GfeHttpResponseException& e) {
-            error = PlankNdi::failureMessage(e.getStatusCode());
+            status = e.getStatusCode();
+            error = PlankNdi::failureMessage(status);
         } catch (const QtNetworkReplyException& e) {
-            error = PlankNdi::failureMessage(NvHTTP::httpStatusForNetworkError(e.getError()));
+            status = NvHTTP::httpStatusForNetworkError(e.getError());
+            error = PlankNdi::failureMessage(status);
         }
         if (request.kind == PlankNdi::Request::Switch) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -1797,7 +1800,7 @@ void Session::serviceNdi(Uint64 now)
                         request.on ? "on" : "off",
                         ok ? qPrintable(state) : qPrintable(error));
         }
-        m_NdiPanel.finish(request, ok, state, source, error, SDL_GetTicks());
+        m_NdiPanel.finish(request, ok, state, source, error, SDL_GetTicks(), status);
     });
 }
 

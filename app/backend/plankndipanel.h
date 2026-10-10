@@ -150,7 +150,26 @@ public:
     bool takeRequest(quint64 now, Request& request)
     {
         std::lock_guard<std::mutex> lock(m_Lock);
-        if (m_State == HostState::Hidden || m_Busy) {
+        if (m_Busy || m_Stopped) {
+            return false;
+        }
+        // The first look at the host happens at once, even while the button is
+        // hidden (serverinfo seen so far may predate sign-in); after that the
+        // state is re-read every RefreshMs, hidden or not, so NDI Tools being
+        // installed or a switch made elsewhere shows up live.
+        if (!m_Synced && !m_SwitchQueued) {
+            m_Busy = true;
+            request.kind = Request::Refresh;
+            request.on = false;
+            return true;
+        }
+        if (m_State == HostState::Hidden && !m_SwitchQueued) {
+            if (now >= m_LastSync + RefreshMs) {
+                m_Busy = true;
+                request.kind = Request::Refresh;
+                request.on = false;
+                return true;
+            }
             return false;
         }
         if (m_SwitchQueued) {
@@ -172,15 +191,28 @@ public:
     // Worker thread: the request is over. On success state/source come from
     // the host's answer; otherwise the old state stays. A failed switch shows
     // errorText for NoticeMs; a failed refresh stays quiet.
+    // httpStatus is the failure's HTTP status when known (0 otherwise). A 404
+    // means an older host without the endpoint: polling stops for good.
     void finish(const Request& request, bool ok, const QString& state,
-                const QString& source, const QString& errorText, quint64 now)
+                const QString& source, const QString& errorText, quint64 now,
+                int httpStatus = 0)
     {
         std::lock_guard<std::mutex> lock(m_Lock);
         m_Busy = false;
         m_LastSync = now;
+        m_Synced = true;
         if (ok) {
             m_State = parseHostState(state);
             m_Source = source;
+            // "always" cannot change without a host restart (which ends the
+            // session); nothing to poll for.
+            if (state.trimmed().toLower() == QLatin1String("always")) {
+                m_Stopped = true;
+            }
+        }
+        else if (httpStatus == 404) {
+            m_Stopped = true;
+            m_State = HostState::Hidden;
         }
         else if (request.kind == Request::Switch) {
             m_Notice = errorText;
@@ -213,6 +245,8 @@ private:
     bool m_SwitchQueued = false;
     bool m_SwitchOn = false;
     quint64 m_LastSync = 0;
+    bool m_Synced = false;   // a request to the host has finished at least once
+    bool m_Stopped = false;  // the host has no such endpoint; stop asking
     QString m_Notice;
     quint64 m_NoticeUntil = 0;
 };
