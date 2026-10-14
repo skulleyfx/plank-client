@@ -95,6 +95,8 @@ public:
     // Windows: read the pen's position the way the mouse's is read (see pen.cpp).
     static void installPenPositionHook();
     static void removePenPositionHook();
+    // Windows: take pen pressure from the Wacom driver (WinTab) for this window.
+    void attachPenPressureSource(SDL_Window* window);
 
     void sendText(QString& string);
 
@@ -280,6 +282,7 @@ private:
     bool m_PenEraser;
     Uint64 m_PenLastLogTime;
     bool m_PenPressureSeen;
+    float m_PenWintabPressure = -1.0f;
     bool m_PenSideButtonsSwapped;
     float m_PenSdlOffsetX;
     float m_PenSdlOffsetY;

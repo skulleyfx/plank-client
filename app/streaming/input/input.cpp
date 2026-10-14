@@ -173,6 +173,7 @@ SdlInputHandler::~SdlInputHandler()
 void SdlInputHandler::setWindow(SDL_Window *window)
 {
     m_Window = window;
+    attachPenPressureSource(m_Window);
     m_LocalCursorSupported =
             (LiGetHostFeatureFlags() & LI_FF_LOCAL_CURSOR) != 0;
     if (m_LocalCursorSupported) {
