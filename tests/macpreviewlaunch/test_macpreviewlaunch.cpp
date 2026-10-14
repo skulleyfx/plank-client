@@ -13,6 +13,7 @@ private slots:
     void sendsSchemaFourWithMediaOff();
     void parsesSchemaFourReply();
     void rejectsOtherReplies();
+    void picksSchemaFromHostVersion();
 };
 
 static NvOutputTopology fixedCaptureTopology()
@@ -75,6 +76,20 @@ void TestMacPreviewLaunch::rejectsOtherReplies()
     QVERIFY(!MacPreviewLaunch::parseReply(unrequested, topology, 47990, 1452, reply));
     QVERIFY(!MacPreviewLaunch::parseReply(validReply(topology), topology, 47991, 1452, reply));
     QVERIFY(reply.transportToken.isEmpty());
+}
+
+void TestMacPreviewLaunch::picksSchemaFromHostVersion()
+{
+    QCOMPARE(MacPreviewLaunch::launchSchemaFor("1.0.105"), 2);
+    QCOMPARE(MacPreviewLaunch::launchSchemaFor("1.0.135"), 2);
+    QCOMPARE(MacPreviewLaunch::launchSchemaFor("1.0.137"), 3);
+    QCOMPARE(MacPreviewLaunch::launchSchemaFor("1.0.143"), 3);
+    QCOMPARE(MacPreviewLaunch::launchSchemaFor("1.1.039"), 4);
+    QCOMPARE(MacPreviewLaunch::launchSchemaFor(""), 4);
+    QCOMPARE(MacPreviewLaunch::displaySchemaFor("1.0.106"), 2);
+    QCOMPARE(MacPreviewLaunch::displaySchemaFor("1.0.120"), 3);
+    QCOMPARE(MacPreviewLaunch::displaySchemaFor("1.0.143"), 3);
+    QCOMPARE(MacPreviewLaunch::displaySchemaFor("1.1.039"), 3);
 }
 
 QTEST_GUILESS_MAIN(TestMacPreviewLaunch)

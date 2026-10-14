@@ -704,11 +704,14 @@ private:
             // An explicit sign-in starts a new conversation, not a request
             // authorized with a previous (possibly expired) session token.
             NvAddress address;
+            QString hostVersion;
             {
                 QReadLocker lock(&m_Computer->lock);
                 address = m_Computer->activeAddress;
+                hostVersion = m_Computer->plankHostVersion;
             }
             NvHTTP http(address);
+            http.setPlankHostVersion(hostVersion);
             bool greeter = false;
             // A manual sign-in never presents a ticket; it only receives one.
             QString resumeTicket;

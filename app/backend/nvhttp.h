@@ -170,6 +170,7 @@ public:
     static int httpStatusForNetworkError(QNetworkReply::NetworkError error);
     NvOutputTopology getOutputTopology(QString* certificateSha256 = nullptr);
     NvOutputTopology prepareMacDisplay(const QString& mode, const QString& encodingMode);
+    void setPlankHostVersion(const QString& version) { m_PlankHostVersion = version; }
     MacPreviewLaunch::Reply startMacPreview(const NvOutputTopology& topology,
                                            const QString& certificateSha256,
                                            int bitrateKbps, int udpPayloadSize);
@@ -238,5 +239,7 @@ private:
     NvAddress m_Address;
     QNetworkAccessManager* m_Nam;
     QString m_SessionToken;
+    // From /serverinfo; picks the Mac host's launch and display schemas.
+    QString m_PlankHostVersion;
     QString m_WorkerInstance;
 };

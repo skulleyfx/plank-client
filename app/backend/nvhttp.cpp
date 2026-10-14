@@ -98,6 +98,7 @@ NvHTTP::NvHTTP(NvComputer* computer, QNetworkAccessManager* nam) :
     NvHTTP(computer->activeAddress, nam)
 {
     setPlankSessionToken(computer->sessionToken);
+    m_PlankHostVersion = computer->plankHostVersion;
 }
 
 void NvHTTP::setAddress(NvAddress address)
@@ -799,12 +800,13 @@ MacPreviewLaunch::Reply NvHTTP::startMacPreview(const NvOutputTopology& topology
                                               const QString& certificateSha256,
                                               int bitrateKbps, int udpPayloadSize)
 {
-    const auto body = MacPreviewLaunch::request(topology, bitrateKbps, udpPayloadSize);
+    const int schema = MacPreviewLaunch::launchSchemaFor(m_PlankHostVersion);
+    const auto body = MacPreviewLaunch::request(topology, bitrateKbps, udpPayloadSize, schema);
     // One-shot launch: even an ambiguous timeout must require fresh auth.
     SecureStringGuard tokenGuard(m_SessionToken);
     const auto object = postPinnedMacJson(QStringLiteral("/plank/launch"), body, certificateSha256);
     MacPreviewLaunch::Reply parsed;
-    if (!MacPreviewLaunch::parseReply(object, topology, controlPort(), udpPayloadSize, parsed)) {
+    if (!MacPreviewLaunch::parseReply(object, topology, controlPort(), udpPayloadSize, parsed, schema)) {
         throw GfeHttpResponseException(400, "Invalid Mac preview launch response");
     }
     return parsed;
@@ -822,10 +824,15 @@ NvOutputTopology NvHTTP::prepareMacDisplay(const QString& mode, const QString& e
     if (!NvOutputTopology::isFixedCaptureHost(current.featureFlags)) {
         throw GfeHttpResponseException(400, "Host does not support Mac desktop preparation");
     }
-    const auto object = postPinnedMacJson(QStringLiteral("/plank/display"),
-        // Schema 3 adds the backing scale; Windows always asks for 1:1 pixels.
-        {{"schema_version", 3}, {"width", size.width()}, {"height", size.height()}, {"scale", 1},
-         {"encoding_mode", encodingMode}}, pin);
+    // Schema 3 (Mac host 1.0.120 and later) adds the backing scale; Windows
+    // always asks for 1:1 pixels. Older hosts take schema 2, without it.
+    QJsonObject displayRequest {{"schema_version", 2}, {"width", size.width()},
+                                {"height", size.height()}, {"encoding_mode", encodingMode}};
+    if (MacPreviewLaunch::displaySchemaFor(m_PlankHostVersion) >= 3) {
+        displayRequest.insert("schema_version", 3);
+        displayRequest.insert("scale", 1);
+    }
+    const auto object = postPinnedMacJson(QStringLiteral("/plank/display"), displayRequest, pin);
     NvOutputTopology result;
     if (!NvOutputTopology::fromJson(object, result) ||
             !NvOutputTopology::isFixedCaptureHost(result.featureFlags) ||
