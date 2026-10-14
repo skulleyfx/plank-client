@@ -101,6 +101,7 @@ public:
     void handleWintabPen(bool outOfProximity, float pressure, unsigned buttons, bool eraser);
     bool isWintabPenDriving();
     bool isWintabPenTarget();
+    void checkWintabContact(float pressure);
 
     void sendText(QString& string);
 
@@ -288,6 +289,12 @@ private:
     bool m_PenPressureSeen;
     float m_PenWintabPressure = -1.0f;
     SDL_Window* m_WintabPenWindow = nullptr;
+    // What the host was last told: tip down or not, and where.
+    bool m_PenContactSent = false;
+    SDL_Window* m_LastPenWindow = nullptr;
+    float m_LastPenX = 0.0f;
+    float m_LastPenY = 0.0f;
+    float m_PenWintabPressureForced = -1.0f;
     float m_WintabPenX = 0.0f;
     float m_WintabPenY = 0.0f;
     bool m_PenSideButtonsSwapped;

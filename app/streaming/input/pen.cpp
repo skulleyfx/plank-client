@@ -317,6 +317,11 @@ void handlePacket(const PACKET& packet)
     // silence just means the pen is drawing in another application.
     const bool inkActive = s_LastInkTicks != 0 && now - s_LastInkTicks < InkQuietMs;
     const bool target = !outOfProximity && s_Handler != nullptr && s_Handler->isWintabPenTarget();
+    if (inkActive && target && !s_Driving) {
+        // Ink drives, but sends nothing while the pen is held still: a press
+        // or lift without movement still has to reach the host.
+        s_Handler->checkWintabContact(s_Pressure);
+    }
     if (inkActive || !target) {
         s_StreakStartTicks = 0;
         if (s_Driving) {
@@ -601,6 +606,17 @@ bool SdlInputHandler::isWintabPenDriving()
     return isPenCaptureAvailable() && Wintab::driving();
 }
 
+void SdlInputHandler::checkWintabContact(float pressure)
+{
+    if (m_LastPenWindow == nullptr || (pressure > 0.0f) == m_PenContactSent) {
+        return;
+    }
+    m_PenWintabPressureForced = pressure;
+    sendPenEvent(m_PenContactSent ? LI_TOUCH_EVENT_UP : LI_TOUCH_EVENT_DOWN,
+                 m_LastPenWindow, m_LastPenX, m_LastPenY);
+    m_PenWintabPressureForced = -1.0f;
+}
+
 bool SdlInputHandler::isWintabPenTarget()
 {
     if (!isPenCaptureAvailable() || !isCaptureActive()) {
@@ -850,6 +866,9 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
             windowX = pixelX;
             windowY = pixelY;
         }
+        if (wintabPressure < 0.0f && m_PenWintabPressureForced >= 0.0f) {
+            wintabPressure = m_PenWintabPressureForced;
+        }
         m_PenWintabPressure = wintabPressure;
 #else
         (void)timestamp;
@@ -883,7 +902,30 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
         contactPressure = m_PenWintabPressure;
     }
 #endif
-    const float pressureOrDistance = m_PenTipDown ? contactPressure : m_PenDistance;
+    bool tipDown = m_PenTipDown;
+#ifdef Q_OS_WIN32
+    // With WinTab pressure, WinTab also decides contact: Windows Ink only
+    // reports the tip down once it passes the driver's click threshold
+    // (15-25% on Culley's Intuos), so the light start and end of every
+    // stroke were lost. Ink still gives the position and its events, which
+    // are renamed to match.
+    if (m_PenWintabPressure >= 0.0f) {
+        tipDown = m_PenWintabPressure > 0.0f;
+        switch (eventType) {
+        case LI_TOUCH_EVENT_DOWN:
+        case LI_TOUCH_EVENT_UP:
+        case LI_TOUCH_EVENT_MOVE:
+        case LI_TOUCH_EVENT_HOVER:
+            eventType = tipDown ?
+                        (m_PenContactSent ? LI_TOUCH_EVENT_MOVE : LI_TOUCH_EVENT_DOWN) :
+                        (m_PenContactSent ? LI_TOUCH_EVENT_UP : LI_TOUCH_EVENT_HOVER);
+            break;
+        default:
+            break;
+        }
+    }
+#endif
+    const float pressureOrDistance = tipDown ? contactPressure : m_PenDistance;
 
     // One line per second while a pen is in use. Without it a pen that draws
     // nothing is indistinguishable from a pen the client never saw, and a
@@ -895,7 +937,7 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
                     "PLANK pen: event=%u tip=%s pressure=%.3f%s distance=%.3f "
                     "tilt=%u rotation=%u buttons=0x%x eraser=%s at %.3f,%.3f "
                     "(SDL position was %+.0f,%+.0f px off)%s map-error=%.1f max %.1f px",
-                    eventType, m_PenTipDown ? "down" : "up",
+                    eventType, tipDown ? "down" : "up",
                     pressureOrDistance,
                     m_PenPressureSeen ? "" : " (no pressure axis reported)",
                     m_PenDistance,
@@ -918,6 +960,30 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
     if (eventType != LI_TOUCH_EVENT_HOVER_LEAVE &&
             eventType != LI_TOUCH_EVENT_CANCEL_ALL) {
         activateWin32PenCursor();
+    }
+
+    switch (eventType) {
+    case LI_TOUCH_EVENT_DOWN:
+    case LI_TOUCH_EVENT_MOVE:
+        m_PenContactSent = true;
+        break;
+    case LI_TOUCH_EVENT_UP:
+    case LI_TOUCH_EVENT_HOVER:
+    case LI_TOUCH_EVENT_HOVER_LEAVE:
+    case LI_TOUCH_EVENT_CANCEL_ALL:
+        m_PenContactSent = false;
+        break;
+    default:
+        break;
+    }
+    if (eventType != LI_TOUCH_EVENT_HOVER_LEAVE &&
+            eventType != LI_TOUCH_EVENT_CANCEL_ALL) {
+        m_LastPenWindow = window;
+        m_LastPenX = windowX;
+        m_LastPenY = windowY;
+    }
+    else {
+        m_LastPenWindow = nullptr;
     }
 
     return LiSendPenEvent(eventType, toolType, m_PenButtons,
