@@ -40,8 +40,12 @@ namespace {
 // pointer message into pen events, so the stored point is the one those
 // events belong to.
 std::atomic<HWND> s_PenPixelWindow {nullptr};
-std::atomic<long> s_PenPixelX {0};
-std::atomic<long> s_PenPixelY {0};
+std::atomic<float> s_PenPixelX {0.0f};
+std::atomic<float> s_PenPixelY {0.0f};
+// How many positions came with sub-pixel precision, and how many fell back
+// to whole pixels (logged with the pen line).
+std::atomic<unsigned> s_PenSubpixelCount {0};
+std::atomic<unsigned> s_PenWholePixelCount {0};
 
 // Pressure from the Wacom driver's own interface (WinTab, wintab32.dll).
 // Windows Ink reports pen pressure in 1024 steps; at a light touch that leaves
@@ -292,9 +296,43 @@ bool SDLCALL plankPenMessageHook(void*, MSG* msg)
         if (GetPointerType(pointerId, &pointerType) && pointerType == PT_PEN &&
                 GetPointerInfo(pointerId, &info)) {
             POINT position = info.ptPixelLocation;
-            if (ScreenToClient(msg->hwnd, &position)) {
-                s_PenPixelX.store(position.x);
-                s_PenPixelY.store(position.y);
+            POINT origin = {0, 0};
+            if (ScreenToClient(msg->hwnd, &position) &&
+                    ClientToScreen(msg->hwnd, &origin)) {
+                // ptPixelLocation is whole pixels, so a slow stroke moves in
+                // one-pixel stairs. The same point in HIMETRIC units, mapped
+                // through the pointer device's own rectangles, carries the
+                // fraction. It is used only when it agrees with the pixel
+                // position, which stays the reference.
+                float x = static_cast<float>(position.x);
+                float y = static_cast<float>(position.y);
+                RECT deviceRect;
+                RECT displayRect;
+                if (GetPointerDeviceRects(info.sourceDevice, &deviceRect, &displayRect) &&
+                        deviceRect.right > deviceRect.left &&
+                        deviceRect.bottom > deviceRect.top) {
+                    const double fx = displayRect.left +
+                            static_cast<double>(info.ptHimetricLocation.x - deviceRect.left) *
+                            (displayRect.right - displayRect.left) /
+                            (deviceRect.right - deviceRect.left) - origin.x;
+                    const double fy = displayRect.top +
+                            static_cast<double>(info.ptHimetricLocation.y - deviceRect.top) *
+                            (displayRect.bottom - displayRect.top) /
+                            (deviceRect.bottom - deviceRect.top) - origin.y;
+                    if (std::fabs(fx - x) <= 1.5 && std::fabs(fy - y) <= 1.5) {
+                        x = static_cast<float>(fx);
+                        y = static_cast<float>(fy);
+                        s_PenSubpixelCount.fetch_add(1);
+                    }
+                    else {
+                        s_PenWholePixelCount.fetch_add(1);
+                    }
+                }
+                else {
+                    s_PenWholePixelCount.fetch_add(1);
+                }
+                s_PenPixelX.store(x);
+                s_PenPixelY.store(y);
                 s_PenPixelWindow.store(msg->hwnd);
             }
         }
@@ -317,8 +355,8 @@ bool SDLCALL plankPenMessageHook(void*, MSG* msg)
 struct PenPixelSample {
     Uint64 timestamp;
     HWND hwnd;
-    long x;
-    long y;
+    float x;
+    float y;
     float wintabPressure; // -1 when WinTab had none
 };
 constexpr int PenPixelSampleCount = 256;
@@ -405,8 +443,8 @@ static bool windowsPenPixelPosition(SDL_Window* window, Uint64 timestamp,
             if (sample.hwnd != hwnd) {
                 return false;
             }
-            x = static_cast<float>(sample.x);
-            y = static_cast<float>(sample.y);
+            x = sample.x;
+            y = sample.y;
             wintabPressure = sample.wintabPressure;
             return true;
         }
@@ -545,7 +583,7 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
         SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
                     "PLANK pen: event=%u tip=%s pressure=%.3f%s distance=%.3f "
                     "tilt=%u rotation=%u buttons=0x%x eraser=%s at %.3f,%.3f "
-                    "(SDL position was %+.0f,%+.0f px off)%s",
+                    "(SDL position was %+.0f,%+.0f px off)%s subpixel=%u/%u",
                     eventType, m_PenTipDown ? "down" : "up",
                     pressureOrDistance,
                     m_PenPressureSeen ? "" : " (no pressure axis reported)",
@@ -555,7 +593,14 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
                     m_PenButtons, m_PenEraser ? "yes" : "no",
                     normalizedX, normalizedY,
                     m_PenSdlOffsetX, m_PenSdlOffsetY,
-                    m_PenWintabPressure >= 0.0f ? " [WinTab pressure]" : "");
+                    m_PenWintabPressure >= 0.0f ? " [WinTab pressure]" : ""
+#ifdef Q_OS_WIN32
+                    , s_PenSubpixelCount.load(),
+                    s_PenSubpixelCount.load() + s_PenWholePixelCount.load()
+#else
+                    , 0u, 0u
+#endif
+                    );
     }
     const unsigned char toolType = m_PenEraser ? LI_TOOL_TYPE_ERASER : LI_TOOL_TYPE_PEN;
 
