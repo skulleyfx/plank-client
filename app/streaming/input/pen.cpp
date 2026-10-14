@@ -358,7 +358,11 @@ bool SDLCALL plankPenMessageHook(void*, MSG* msg)
                             const double screenY = fy + origin.y;
                             const double moved = std::hypot(screenX - s_PenLastMappedX,
                                                             screenY - s_PenLastMappedY);
-                            const double follow = std::min(1.0, moved / 64.0);
+                            // About 64 px of movement to settle, and never
+                            // more than a small step from one sample, so a jump
+                            // (the pen coming back elsewhere) cannot replace
+                            // what was learned with one sample's rounding.
+                            const double follow = std::min(0.05, moved / 640.0);
                             s_PenOffsetX += follow * ((errorX - 0.5) - s_PenOffsetX);
                             s_PenOffsetY += follow * ((errorY - 0.5) - s_PenOffsetY);
                         }
