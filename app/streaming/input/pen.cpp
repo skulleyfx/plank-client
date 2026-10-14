@@ -62,28 +62,36 @@ RECT s_PenDisplayRect = {};
 std::atomic<float> s_PenMapErrorMax {0.0f};
 std::atomic<float> s_PenMapErrorLast {0.0f};
 
-// Pressure from the Wacom driver's own interface (WinTab, wintab32.dll).
-// Windows Ink reports pen pressure in 1024 steps; at a light touch that leaves
-// a few dozen levels, and Flame's pressure curve turns them into visible
-// stairs. WinTab reports the tablet's full range (8192 levels on current
-// Wacoms), as a tablet plugged into the host would. Only pressure is taken
-// from it: position, contact and buttons still come from Windows Ink. No
-// headers or import library are needed: the few definitions are below and
-// the DLL is loaded at run time, so a machine without a Wacom driver simply
-// keeps Windows Ink pressure.
+// The pen through the Wacom driver's own interface (WinTab, wintab32.dll).
+// Windows Ink reports pressure in 1024 steps, which leaves a few dozen levels
+// at a light touch (Flame's pressure curve shows them as stairs), and it only
+// reports contact once the pen passes the driver's click threshold, so the
+// light start of a stroke is lost. WinTab reports the tablet's full range
+// (8192 levels on current Wacoms) from the first trace of pressure, as a
+// tablet plugged into the host would.
+//
+// The context is a *system* context: the driver keeps moving the cursor for
+// it. (Client .56 opened a digitizing context; being on top, it took the
+// whole tablet away from the system context, and the pen stopped working.)
+// While Windows Ink keeps delivering pen messages, Ink still gives position,
+// contact and buttons and WinTab only pressure. If the driver hands the pen to
+// WinTab instead and Ink falls silent, WinTab drives the pen on its own: the
+// cursor gives the position, the packets give pressure, contact, eraser and
+// buttons. No headers or import library are needed: the few definitions are
+// below and the DLL is loaded at run time; without a Wacom driver, or with
+// PLANK_WINTAB=0, the pen is Windows Ink's alone.
 namespace Wintab {
 using HCTX = HANDLE;
 using WTPKT = DWORD;
 using FIX32 = DWORD;
-constexpr UINT WTI_DEFCONTEXT = 3;
+constexpr UINT WTI_DEFSYSCTX = 4;
 constexpr UINT WTI_DEVICES = 100;
 constexpr UINT DVC_NPRESSURE = 15;
-constexpr UINT CXO_SYSTEM = 0x0001;
 constexpr UINT CXO_MESSAGES = 0x0004;
 constexpr WTPKT PK_STATUS = 0x0002;
 constexpr WTPKT PK_TIME = 0x0004;
-constexpr WTPKT PK_X = 0x0080;
-constexpr WTPKT PK_Y = 0x0100;
+constexpr WTPKT PK_CURSOR = 0x0020;
+constexpr WTPKT PK_BUTTONS = 0x0040;
 constexpr WTPKT PK_NORMAL_PRESSURE = 0x0400;
 constexpr UINT TPS_PROXIMITY = 0x0001;
 constexpr UINT WT_DEFBASE = 0x7FF0;
@@ -137,6 +145,8 @@ struct LOGCONTEXTW {
 struct PACKET {
     UINT pkStatus;
     DWORD pkTime;
+    UINT pkCursor;
+    DWORD pkButtons;
     UINT pkNormalPressure;
 };
 
@@ -159,13 +169,26 @@ HWND s_ContextWindow = nullptr;
 float s_PressureMin = 0.0f;
 float s_PressureRange = 0.0f;
 
-// Latest WinTab pressure (0..1), written and read on the event thread. It
-// stays valid from the first packet until the pen leaves the tablet or the
-// window, so a stroke never switches between WinTab's fine steps and Windows
-// Ink's coarse ones part way through.
+// Everything below is written and read on the event thread only.
+
+// Latest pressure (0..1). It stays valid from the first packet until the pen
+// leaves the tablet or the window, so a stroke never switches between
+// WinTab's fine steps and Ink's coarse ones part way through.
 float s_Pressure = 0.0f;
 bool s_PressureValid = false;
+
+// Who drives the pen. Ink pen messages seen within InkQuietMs mean Ink does;
+// WinTab drives only once it has delivered packets for DriveAfterMs with Ink
+// silent, so the first packet of a touch never races Ink's first message.
+constexpr Uint64 InkQuietMs = 250;
+constexpr Uint64 DriveAfterMs = 120;
+Uint64 s_LastInkTicks = 0;
+Uint64 s_StreakStartTicks = 0;
+bool s_Driving = false;
+bool s_InProximity = false;
 bool s_LoggedFirstPacket = false;
+
+SdlInputHandler* s_Handler = nullptr;
 
 void close()
 {
@@ -175,6 +198,8 @@ void close()
     s_Context = nullptr;
     s_ContextWindow = nullptr;
     s_PressureValid = false;
+    s_Driving = false;
+    s_InProximity = false;
 }
 
 void open(HWND hwnd)
@@ -188,7 +213,7 @@ void open(HWND hwnd)
                                   LOAD_LIBRARY_SEARCH_SYSTEM32);
         if (s_Module == nullptr) {
             SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
-                        "PLANK pen: no Wacom WinTab driver; pressure comes from Windows Ink");
+                        "PLANK pen: no Wacom WinTab driver; the pen comes from Windows Ink");
             return;
         }
         s_Info = reinterpret_cast<WTInfoWFn>(GetProcAddress(s_Module, "WTInfoW"));
@@ -207,7 +232,7 @@ void open(HWND hwnd)
     // no tablet service is running.
     if (s_Info(0, 0, nullptr) == 0) {
         SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
-                    "PLANK pen: WinTab has no tablet service; pressure comes from Windows Ink");
+                    "PLANK pen: WinTab has no tablet service; the pen comes from Windows Ink");
         return;
     }
     AXIS pressure = {};
@@ -216,23 +241,22 @@ void open(HWND hwnd)
         return;
     }
     LOGCONTEXTW context = {};
-    if (s_Info(WTI_DEFCONTEXT, 0, &context) == 0) {
+    if (s_Info(WTI_DEFSYSCTX, 0, &context) == 0) {
         return;
     }
-    // A digitizing context that only reports packets to this window: it does
-    // not move the cursor (Windows Ink keeps doing that).
-    wcsncpy_s(context.lcName, L"PLANK pen pressure", _TRUNCATE);
-    context.lcOptions = (context.lcOptions | CXO_MESSAGES) & ~CXO_SYSTEM;
-    context.lcPktData = PK_STATUS | PK_TIME | PK_NORMAL_PRESSURE;
+    // The default system context, unchanged except that it also reports
+    // packets to this window: the driver keeps its own mapping and keeps
+    // moving the cursor.
+    wcsncpy_s(context.lcName, L"PLANK pen", _TRUNCATE);
+    context.lcOptions |= CXO_MESSAGES;
+    context.lcPktData = PK_STATUS | PK_TIME | PK_CURSOR | PK_BUTTONS | PK_NORMAL_PRESSURE;
     context.lcPktMode = 0;
-    // Motion as well as pressure changes produce packets, so a stroke at
-    // steady pressure keeps delivering them.
-    context.lcMoveMask = PK_X | PK_Y | PK_NORMAL_PRESSURE;
+    context.lcMoveMask |= PK_BUTTONS | PK_NORMAL_PRESSURE;
     context.lcMsgBase = WT_DEFBASE;
     s_Context = s_Open(hwnd, &context, TRUE);
     if (s_Context == nullptr) {
         SDL_LogWarn(SDL_LOG_CATEGORY_INPUT,
-                    "PLANK pen: unable to open a WinTab context; pressure comes from Windows Ink");
+                    "PLANK pen: unable to open a WinTab context; the pen comes from Windows Ink");
         return;
     }
     s_ContextWindow = hwnd;
@@ -245,8 +269,47 @@ void open(HWND hwnd)
     s_PressureRange = static_cast<float>(pressure.axMax - pressure.axMin);
     s_LoggedFirstPacket = false;
     SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
-                "PLANK pen: Wacom WinTab pressure enabled (%ld levels)",
-                pressure.axMax + 1);
+                "PLANK pen: Wacom WinTab system context open (%ld pressure levels)",
+                pressure.axMax - pressure.axMin + 1);
+}
+
+void handlePacket(const PACKET& packet)
+{
+    const Uint64 now = SDL_GetTicks();
+    const bool inkActive = s_LastInkTicks != 0 && now - s_LastInkTicks < InkQuietMs;
+    if (inkActive) {
+        s_StreakStartTicks = 0;
+    }
+    else if (s_StreakStartTicks == 0) {
+        s_StreakStartTicks = now;
+    }
+    const bool drive = !inkActive && now - s_StreakStartTicks >= DriveAfterMs;
+    if (drive != s_Driving) {
+        s_Driving = drive;
+        SDL_LogInfo(SDL_LOG_CATEGORY_INPUT, drive ?
+                        "PLANK pen: Windows Ink is silent; WinTab drives the pen" :
+                        "PLANK pen: Windows Ink drives the pen, WinTab gives pressure");
+    }
+
+    const bool outOfProximity = (packet.pkStatus & TPS_PROXIMITY) != 0;
+    s_InProximity = !outOfProximity;
+    if (outOfProximity) {
+        s_PressureValid = false;
+    }
+    else {
+        s_Pressure = std::clamp(
+                    (static_cast<float>(packet.pkNormalPressure) - s_PressureMin) /
+                        s_PressureRange,
+                    0.0f, 1.0f);
+        s_PressureValid = true;
+    }
+
+    if (s_Driving && s_Handler != nullptr) {
+        // Wacom numbers cursors in threes per tablet: puck, pen tip, eraser.
+        const bool eraser = packet.pkCursor % 3 == 2;
+        s_Handler->handleWintabPen(outOfProximity, s_Pressure,
+                                   static_cast<unsigned>(packet.pkButtons), eraser);
+    }
 }
 
 void handleMessage(const MSG* msg)
@@ -258,21 +321,12 @@ void handleMessage(const MSG* msg)
             reinterpret_cast<HCTX>(msg->lParam) == s_Context) {
         PACKET packet = {};
         if (s_Packet(s_Context, static_cast<UINT>(msg->wParam), &packet)) {
-            if (packet.pkStatus & TPS_PROXIMITY) {
-                // The pen has left the tablet.
-                s_PressureValid = false;
-                return;
-            }
-            s_Pressure = std::clamp(
-                        (static_cast<float>(packet.pkNormalPressure) - s_PressureMin) /
-                            s_PressureRange,
-                        0.0f, 1.0f);
-            s_PressureValid = true;
             if (!s_LoggedFirstPacket) {
                 s_LoggedFirstPacket = true;
                 SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
                             "PLANK pen: first WinTab packet received");
             }
+            handlePacket(packet);
         }
     }
     else if (msg->message == WM_POINTERENTER && s_Overlap != nullptr) {
@@ -284,6 +338,18 @@ void handleMessage(const MSG* msg)
     }
     else if (msg->message == WM_POINTERLEAVE) {
         s_PressureValid = false;
+    }
+}
+
+// Ink delivered a pen message: Ink drives.
+void noteInkPen()
+{
+    s_LastInkTicks = SDL_GetTicks();
+    s_StreakStartTicks = 0;
+    if (s_Driving) {
+        s_Driving = false;
+        SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
+                    "PLANK pen: Windows Ink drives the pen, WinTab gives pressure");
     }
 }
 
@@ -308,6 +374,9 @@ bool SDLCALL plankPenMessageHook(void*, MSG* msg)
         const UINT32 pointerId = GET_POINTERID_WPARAM(msg->wParam);
         POINTER_INPUT_TYPE pointerType = PT_POINTER;
         POINTER_INFO info;
+        if (GetPointerType(pointerId, &pointerType) && pointerType == PT_PEN) {
+            Wintab::noteInkPen();
+        }
         if (GetPointerType(pointerId, &pointerType) && pointerType == PT_PEN &&
                 GetPointerInfo(pointerId, &info)) {
             POINT position = info.ptPixelLocation;
@@ -444,25 +513,116 @@ void SdlInputHandler::removePenPositionHook()
     SDL_SetWindowsMessageHook(nullptr, nullptr);
     SDL_RemoveEventWatch(plankPenEventWatch, nullptr);
     s_PenPixelWindow.store(nullptr);
+    Wintab::s_Handler = nullptr;
     Wintab::close();
 }
 
 void SdlInputHandler::attachPenPressureSource(SDL_Window* window)
 {
-    // Off unless PLANK_WINTAB=1: on Culley's Intuos (client .56) opening a
-    // WinTab context stopped the pen reaching PLANK at all, presumably
-    // because the Wacom driver then routes the pen to WinTab instead of
-    // Windows Ink. Kept for a later attempt that reads position and contact
-    // from WinTab too.
-    if (qEnvironmentVariableIntValue("PLANK_WINTAB") == 0) {
+    // PLANK_WINTAB=0 leaves the pen to Windows Ink alone.
+    if (qEnvironmentVariableIsSet("PLANK_WINTAB") &&
+            qEnvironmentVariableIntValue("PLANK_WINTAB") == 0) {
         return;
     }
+    Wintab::s_Handler = this;
     const SDL_PropertiesID properties = SDL_GetWindowProperties(window);
     HWND hwnd = properties != 0 ?
                 reinterpret_cast<HWND>(SDL_GetPointerProperty(
                     properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr)) :
                 nullptr;
     Wintab::open(hwnd);
+}
+
+bool SdlInputHandler::isWintabPenDriving() const
+{
+    // While WinTab drives the pen, the cursor the driver moves for it can
+    // arrive as plain mouse input; that must not reach the host as well.
+    return Wintab::s_Driving && Wintab::s_InProximity;
+}
+
+void SdlInputHandler::handleWintabPen(bool outOfProximity, float pressure,
+                                      unsigned buttons, bool eraser)
+{
+    if (!isPenCaptureAvailable()) {
+        return;
+    }
+    // The window under the cursor, which the driver keeps on the pen.
+    SDL_Window* window = nullptr;
+    float x = 0.0f;
+    float y = 0.0f;
+    POINT cursor;
+    if (!outOfProximity && GetCursorPos(&cursor)) {
+        const auto tryWindow = [&](SDL_Window* candidate) {
+            if (window != nullptr || candidate == nullptr) {
+                return;
+            }
+            const SDL_PropertiesID properties = SDL_GetWindowProperties(candidate);
+            HWND hwnd = properties != 0 ?
+                        reinterpret_cast<HWND>(SDL_GetPointerProperty(
+                            properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr)) :
+                        nullptr;
+            RECT client;
+            POINT point = cursor;
+            if (hwnd != nullptr && GetClientRect(hwnd, &client) &&
+                    ScreenToClient(hwnd, &point) && PtInRect(&client, point)) {
+                window = candidate;
+                x = static_cast<float>(point.x);
+                y = static_cast<float>(point.y);
+            }
+        };
+        if (m_PresentationLayout.outputs.isEmpty()) {
+            tryWindow(m_Window);
+        }
+        for (const auto& output : m_PresentationLayout.outputs) {
+            tryWindow(output.window);
+        }
+    }
+
+    if (window == nullptr) {
+        // Off the tablet or off PLANK's windows: lift the pen if it was down
+        // and let the host know it has gone.
+        if (m_PenTipDown && m_WintabPenWindow != nullptr) {
+            m_PenTipDown = false;
+            sendPenEvent(LI_TOUCH_EVENT_UP, m_WintabPenWindow, m_WintabPenX, m_WintabPenY);
+        }
+        if (m_WintabPenWindow != nullptr) {
+            sendPenEvent(LI_TOUCH_EVENT_HOVER_LEAVE, m_WintabPenWindow, 0.0f, 0.0f);
+            m_WintabPenWindow = nullptr;
+            resetPenState();
+        }
+        return;
+    }
+
+    // Wacom buttons: bit 0 is the tip, bits 1 and 2 the lower and upper side
+    // buttons (SDL's barrel buttons 1 and 2 on the Ink path).
+    unsigned char mask = 0;
+    if (buttons & 0x2) {
+        mask |= m_PenSideButtonsSwapped ? LI_PEN_BUTTON_SECONDARY : LI_PEN_BUTTON_PRIMARY;
+    }
+    if (buttons & 0x4) {
+        mask |= m_PenSideButtonsSwapped ? LI_PEN_BUTTON_PRIMARY : LI_PEN_BUTTON_SECONDARY;
+    }
+    m_PenButtons = mask;
+    m_PenEraser = eraser;
+    m_PenPressure = pressure;
+    m_PenPressureSeen = true;
+
+    // Contact from the first trace of pressure, not from the driver's click
+    // threshold, so the light start of a stroke is kept; the host's Wacom
+    // driver applies its own (low) threshold for the click.
+    const bool contact = pressure > 0.0f;
+    unsigned char eventType;
+    if (contact) {
+        eventType = m_PenTipDown ? LI_TOUCH_EVENT_MOVE : LI_TOUCH_EVENT_DOWN;
+    }
+    else {
+        eventType = m_PenTipDown ? LI_TOUCH_EVENT_UP : LI_TOUCH_EVENT_HOVER;
+    }
+    m_PenTipDown = contact;
+    m_WintabPenWindow = window;
+    m_WintabPenX = x;
+    m_WintabPenY = y;
+    sendPenEvent(eventType, window, x, y);
 }
 
 static bool windowsPenPixelPosition(SDL_Window* window, Uint64 timestamp,
@@ -504,6 +664,7 @@ static bool windowsPenPixelPosition(SDL_Window* window, Uint64 timestamp,
 void SdlInputHandler::installPenPositionHook() {}
 void SdlInputHandler::removePenPositionHook() {}
 void SdlInputHandler::attachPenPressureSource(SDL_Window*) {}
+bool SdlInputHandler::isWintabPenDriving() const { return false; }
 #endif
 
 void SdlInputHandler::resetPenState()

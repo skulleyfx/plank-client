@@ -97,6 +97,9 @@ public:
     static void removePenPositionHook();
     // Windows: take pen pressure from the Wacom driver (WinTab) for this window.
     void attachPenPressureSource(SDL_Window* window);
+    // Windows: WinTab drives the pen while Windows Ink is silent (pen.cpp).
+    void handleWintabPen(bool outOfProximity, float pressure, unsigned buttons, bool eraser);
+    bool isWintabPenDriving() const;
 
     void sendText(QString& string);
 
@@ -283,6 +286,9 @@ private:
     Uint64 m_PenLastLogTime;
     bool m_PenPressureSeen;
     float m_PenWintabPressure = -1.0f;
+    SDL_Window* m_WintabPenWindow = nullptr;
+    float m_WintabPenX = 0.0f;
+    float m_WintabPenY = 0.0f;
     bool m_PenSideButtonsSwapped;
     float m_PenSdlOffsetX;
     float m_PenSdlOffsetY;
