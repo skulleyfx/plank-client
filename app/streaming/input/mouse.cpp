@@ -23,7 +23,7 @@ void SdlInputHandler::handleMouseButtonEvent(SDL_MouseButtonEvent* event)
         // pointers at once, which an artist sees as a pen that jumps.
         return;
     }
-    activateCompositorCursor();
+    activateCompositorCursorForMouse();
     if (!isCaptureActive()) {
         if (event->button == SDL_BUTTON_LEFT && !event->down &&
                 isMouseInVideoRegion(event->x, event->y,
@@ -97,7 +97,7 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event,
         // produces alongside its own events.
         return;
     }
-    activateCompositorCursor();
+    activateCompositorCursorForMouse();
 
     SDL_Window* window = presentationWindow(event->windowID);
     if (window == nullptr) {
@@ -212,7 +212,7 @@ void SdlInputHandler::handleMouseWheelEvent(SDL_MouseWheelEvent* event)
         // produces alongside its own events.
         return;
     }
-    activateCompositorCursor();
+    activateCompositorCursorForMouse();
 
     SDL_Window* window = presentationWindow(event->windowID);
     if (window == nullptr) {

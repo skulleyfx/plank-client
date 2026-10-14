@@ -912,6 +912,21 @@ void SdlInputHandler::activateCompositorCursor()
                  "Restored Wayland compositor cursor for mouse input");
 }
 
+void SdlInputHandler::activateCompositorCursorForMouse()
+{
+    // A pen click ends with a mouse button release (and sometimes a mouse
+    // move) that Windows or the Wacom driver sends alongside the pen's own
+    // events. Swapping to the local cursor for it, then back on the next pen
+    // event, made the pointer flash on every click. While the pen is near
+    // the tablet it sends hover events, so a mouse only takes the cursor
+    // back once the pen has been quiet for a moment.
+    if (m_TabletCursorActive && m_LastPenEventTicks != 0 &&
+            SDL_GetTicks() - m_LastPenEventTicks < 300) {
+        return;
+    }
+    activateCompositorCursor();
+}
+
 void SdlInputHandler::activateWin32PenCursor()
 {
 #ifdef Q_OS_WIN32

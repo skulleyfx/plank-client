@@ -976,6 +976,7 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
 
     if (eventType != LI_TOUCH_EVENT_HOVER_LEAVE &&
             eventType != LI_TOUCH_EVENT_CANCEL_ALL) {
+        m_LastPenEventTicks = SDL_GetTicks();
         activateWin32PenCursor();
     }
 

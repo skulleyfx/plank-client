@@ -178,6 +178,7 @@ private:
     bool m_RemoteCursorVisible;
     bool m_CompositorCursorRequestedVisible;
     bool m_TabletCursorActive;
+    Uint64 m_LastPenEventTicks = 0;
     bool m_ViewOnly = false;
     // Set once a session has been view-only; pen capture stays off.
     bool m_ViewerSession = false;
@@ -241,6 +242,7 @@ private:
 
     void setCursorVisible(bool visible);
     void activateCompositorCursor();
+    void activateCompositorCursorForMouse();
     void activateWin32PenCursor();
     void penLeftPicture();
     PlankWaylandCursor* ensureWaylandTabletCursorAttached(
