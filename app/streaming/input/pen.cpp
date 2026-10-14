@@ -73,32 +73,91 @@ bool SDLCALL plankPenMessageHook(void*, MSG* msg)
     return true; // SDL still handles every message
 }
 
+// One pump can turn several pointer messages into several queued pen events
+// before the first of them is handled, so the latest position is not the
+// right one for an older event. An event watch runs inside SDL_PushEvent,
+// during the same DispatchMessage that follows the hook, and records the
+// position for that event's timestamp; the handler looks it up later.
+struct PenPixelSample {
+    Uint64 timestamp;
+    HWND hwnd;
+    long x;
+    long y;
+};
+constexpr int PenPixelSampleCount = 256;
+PenPixelSample s_PenPixelSamples[PenPixelSampleCount] = {};
+int s_PenPixelNext = 0;
+
+bool SDLCALL plankPenEventWatch(void*, SDL_Event* event)
+{
+    switch (event->type) {
+    case SDL_EVENT_PEN_DOWN:
+    case SDL_EVENT_PEN_UP:
+    case SDL_EVENT_PEN_MOTION:
+    case SDL_EVENT_PEN_BUTTON_DOWN:
+    case SDL_EVENT_PEN_BUTTON_UP: {
+        HWND hwnd = s_PenPixelWindow.load();
+        if (hwnd == nullptr) {
+            break;
+        }
+        PenPixelSample& sample = s_PenPixelSamples[s_PenPixelNext];
+        sample.timestamp = event->common.timestamp;
+        sample.hwnd = hwnd;
+        sample.x = s_PenPixelX.load();
+        sample.y = s_PenPixelY.load();
+        s_PenPixelNext = (s_PenPixelNext + 1) % PenPixelSampleCount;
+        break;
+    }
+    default:
+        break;
+    }
+    return true;
+}
+
 } // namespace
 
 void SdlInputHandler::installPenPositionHook()
 {
     SDL_SetWindowsMessageHook(plankPenMessageHook, nullptr);
+    SDL_AddEventWatch(plankPenEventWatch, nullptr);
 }
 
 void SdlInputHandler::removePenPositionHook()
 {
     SDL_SetWindowsMessageHook(nullptr, nullptr);
+    SDL_RemoveEventWatch(plankPenEventWatch, nullptr);
     s_PenPixelWindow.store(nullptr);
 }
 
-static bool windowsPenPixelPosition(SDL_Window* window, float& x, float& y)
+static bool windowsPenPixelPosition(SDL_Window* window, Uint64 timestamp,
+                                    float& x, float& y)
 {
+    if (timestamp == 0) {
+        return false;
+    }
     const SDL_PropertiesID properties = SDL_GetWindowProperties(window);
     HWND hwnd = properties != 0 ?
                 reinterpret_cast<HWND>(SDL_GetPointerProperty(
                     properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr)) :
                 nullptr;
-    if (hwnd == nullptr || s_PenPixelWindow.load() != hwnd) {
+    if (hwnd == nullptr) {
         return false;
     }
-    x = static_cast<float>(s_PenPixelX.load());
-    y = static_cast<float>(s_PenPixelY.load());
-    return true;
+    // Newest first: the sample for an event is recent unless the queue is
+    // very far behind, and then SDL's own position is the fallback.
+    for (int i = 1; i <= PenPixelSampleCount; i++) {
+        const PenPixelSample& sample = s_PenPixelSamples[
+                (s_PenPixelNext - i + PenPixelSampleCount) % PenPixelSampleCount];
+        if (sample.timestamp == timestamp) {
+            if (sample.hwnd != hwnd) {
+                return false;
+            }
+            x = static_cast<float>(sample.x);
+            y = static_cast<float>(sample.y);
+            return true;
+        }
+    }
+    return false;
 }
 #else
 void SdlInputHandler::installPenPositionHook() {}
@@ -143,10 +202,13 @@ bool SdlInputHandler::isPenCaptureAvailable() const
  * @param window Window the pen is over.
  * @param windowX Pen position in window coordinates.
  * @param windowY Pen position in window coordinates.
+ * @param timestamp The SDL event's timestamp, which finds the pixel position
+ *        Windows reported for it (0 when there is no position).
  * @return Whether the event was sent.
  */
 bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
-                                   float windowX, float windowY)
+                                   float windowX, float windowY,
+                                   Uint64 timestamp)
 {
     if (!isPenCaptureAvailable()) {
         return false;
@@ -175,12 +237,14 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
 #ifdef Q_OS_WIN32
         float pixelX = windowX;
         float pixelY = windowY;
-        if (windowsPenPixelPosition(window, pixelX, pixelY)) {
+        if (windowsPenPixelPosition(window, timestamp, pixelX, pixelY)) {
             m_PenSdlOffsetX = windowX - pixelX;
             m_PenSdlOffsetY = windowY - pixelY;
             windowX = pixelX;
             windowY = pixelY;
         }
+#else
+        (void)timestamp;
 #endif
 
         QPointF streamPoint;
@@ -263,7 +327,7 @@ void SdlInputHandler::handlePenTouchEvent(SDL_PenTouchEvent* event)
     m_PenEraser = event->eraser;
     m_PenTipDown = event->down || (event->pen_state & SDL_PEN_INPUT_DOWN) != 0;
     sendPenEvent(event->down ? LI_TOUCH_EVENT_DOWN : LI_TOUCH_EVENT_UP,
-                 window, event->x, event->y);
+                 window, event->x, event->y, event->timestamp);
 }
 
 void SdlInputHandler::handlePenMotionEvent(SDL_PenMotionEvent* event)
@@ -280,7 +344,7 @@ void SdlInputHandler::handlePenMotionEvent(SDL_PenMotionEvent* event)
     m_PenTipDown = (event->pen_state & SDL_PEN_INPUT_DOWN) != 0 ||
                    m_PenPressure > 0.0f;
     sendPenEvent(m_PenTipDown ? LI_TOUCH_EVENT_MOVE : LI_TOUCH_EVENT_HOVER,
-                 window, event->x, event->y);
+                 window, event->x, event->y, event->timestamp);
 }
 
 void SdlInputHandler::setPenSideButtonsSwapped(bool swapped)
@@ -327,7 +391,8 @@ void SdlInputHandler::handlePenButtonEvent(SDL_PenButtonEvent* event)
     else {
         m_PenButtons &= static_cast<unsigned char>(~mask);
     }
-    sendPenEvent(LI_TOUCH_EVENT_BUTTON_ONLY, window, event->x, event->y);
+    sendPenEvent(LI_TOUCH_EVENT_BUTTON_ONLY, window, event->x, event->y,
+                 event->timestamp);
 }
 
 void SdlInputHandler::handlePenAxisEvent(SDL_PenAxisEvent* event)

@@ -248,7 +248,7 @@ private:
                                    bool allowClampedPosition);
 
     bool sendPenEvent(unsigned char eventType, SDL_Window* window,
-                      float windowX, float windowY);
+                      float windowX, float windowY, Uint64 timestamp = 0);
     void resetPenState();
 
     SDL_Window* presentationWindow(Uint32 windowId) const;
