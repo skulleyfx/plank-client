@@ -173,7 +173,8 @@ public:
     void setPlankHostVersion(const QString& version) { m_PlankHostVersion = version; }
     MacPreviewLaunch::Reply startMacPreview(const NvOutputTopology& topology,
                                            const QString& certificateSha256,
-                                           int bitrateKbps, int udpPayloadSize);
+                                           int bitrateKbps, int udpPayloadSize,
+                                           bool clipboard = false);
 
     NvAddress address();
 

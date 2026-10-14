@@ -11,8 +11,9 @@
 //   1.0.137 - 1.0.x    schema 3 (adds clipboard)
 //   1.1 and later      schema 4 (adds microphone), the oldest a 1.1 host
 //                      accepts without /plank/negotiate
-// Windows forwards no clipboard, microphone or camera to a Mac host, so they
-// stay off. Never reinterpret Linux's PLS1 launch response or infer services
+// Text clipboard is asked for from schema 3 when the user allows it; the Mac
+// decides (only when the signed-in account owns the desktop) and says so in
+// the reply. Windows forwards no microphone or camera to a Mac host. Never reinterpret Linux's PLS1 launch response or infer services
 // from a platform name or a decoder's capabilities.
 namespace MacPreviewLaunch {
 
@@ -40,7 +41,7 @@ inline int displaySchemaFor(const QString& hostVersion)
 }
 
 inline QJsonObject request(const NvOutputTopology& topology, int bitrateKbps,
-                           int udpPayloadSize, int schema = 4)
+                           int udpPayloadSize, int schema = 4, bool clipboard = false)
 {
     NvOutputTopology checked;
     if (!NvOutputTopology::isFixedCaptureHost(topology.featureFlags) ||
@@ -53,27 +54,29 @@ inline QJsonObject request(const NvOutputTopology& topology, int bitrateKbps,
             {"width", checked.desktopWidth}, {"height", checked.desktopHeight},
             {"encoding_mode", checked.appleEncodingMode}, {"frame_rate", 60},
             {"bitrate_kbps", bitrateKbps}, {"max_udp_payload_size", udpPayloadSize}};
-    if (schema >= 3) body.insert("clipboard", false);
+    if (schema >= 3) body.insert("clipboard", clipboard);
     if (schema >= 4) body.insert("microphone", false);
     return body;
 }
 
-inline QJsonObject expectedServices(int schema)
+// The Mac may turn down a clipboard request, never grant one not asked for.
+inline QJsonObject expectedServices(int schema, bool clipboard)
 {
     QJsonObject services {{"audio", true}, {"input", true}, {"pen", "normalized"}, {"cursor", "embedded"}};
-    if (schema >= 3) services.insert("clipboard", false);
+    if (schema >= 3) services.insert("clipboard", clipboard);
     if (schema >= 4) services.insert("microphone", false);
     return services;
 }
 
 struct Reply {
     QByteArray transportToken;
+    bool clipboard = false;
     PLANK_NATIVE_SESSION_CONFIGURATION configuration {};
 };
 
 inline bool parseReply(const QJsonObject& object, const NvOutputTopology& topology,
                        int approvedControlPort, int udpPayloadSize, Reply& reply,
-                       int schema = 4)
+                       int schema = 4, bool clipboardRequested = false)
 {
     // Always clear an earlier successful result before parsing a new response.
     reply.transportToken.fill('\0');
@@ -85,7 +88,11 @@ inline bool parseReply(const QJsonObject& object, const NvOutputTopology& topolo
             object.value("udp_port") != QJsonValue(approvedControlPort) ||
             object.value("max_udp_payload_size") != QJsonValue(udpPayloadSize) ||
             object.value("capture") != topology.toJson().value("capture") ||
-            object.value("services") != QJsonValue(expectedServices(schema))) return false;
+            (object.value("services") != QJsonValue(expectedServices(schema, false)) &&
+             !(clipboardRequested && schema >= 3 &&
+               object.value("services") == QJsonValue(expectedServices(schema, true))))) return false;
+    reply.clipboard = clipboardRequested && schema >= 3 &&
+            object.value("services").toObject().value("clipboard") == QJsonValue(true);
 
     const QString token = object.value("transport_token").toString();
     if (token.size() != 44) return false;

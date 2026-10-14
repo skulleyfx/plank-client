@@ -798,15 +798,16 @@ NvOutputTopology NvHTTP::getOutputTopology(QString* certificateSha256)
 
 MacPreviewLaunch::Reply NvHTTP::startMacPreview(const NvOutputTopology& topology,
                                               const QString& certificateSha256,
-                                              int bitrateKbps, int udpPayloadSize)
+                                              int bitrateKbps, int udpPayloadSize,
+                                              bool clipboard)
 {
     const int schema = MacPreviewLaunch::launchSchemaFor(m_PlankHostVersion);
-    const auto body = MacPreviewLaunch::request(topology, bitrateKbps, udpPayloadSize, schema);
+    const auto body = MacPreviewLaunch::request(topology, bitrateKbps, udpPayloadSize, schema, clipboard);
     // One-shot launch: even an ambiguous timeout must require fresh auth.
     SecureStringGuard tokenGuard(m_SessionToken);
     const auto object = postPinnedMacJson(QStringLiteral("/plank/launch"), body, certificateSha256);
     MacPreviewLaunch::Reply parsed;
-    if (!MacPreviewLaunch::parseReply(object, topology, controlPort(), udpPayloadSize, parsed, schema)) {
+    if (!MacPreviewLaunch::parseReply(object, topology, controlPort(), udpPayloadSize, parsed, schema, clipboard)) {
         throw GfeHttpResponseException(400, "Invalid Mac preview launch response");
     }
     return parsed;

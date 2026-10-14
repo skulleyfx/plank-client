@@ -3418,7 +3418,11 @@ bool Session::startConnectionAsync(bool reconnecting,
                         topology.desktopHeight != m_StreamConfig.height) {
                     throw GfeHttpResponseException(409, "The Mac display changed. Reconnect to refresh its capture geometry.");
                 }
-                macLaunch = http->startMacPreview(topology, pin, m_StreamConfig.bitrate, quicUdpPayloadMtu);
+                // Text clipboard, when the user allows it; the Mac answers
+                // whether it will sync (see MacPreviewLaunch).
+                macLaunch = http->startMacPreview(topology, pin, m_StreamConfig.bitrate, quicUdpPayloadMtu,
+                        PlankSharedScreen::policyFor(m_JoinAsViewer).syncsClipboard &&
+                        m_Preferences->plankClipboardText);
                 plankTransportPort = http->controlPort();
                 plankTransportCertificateSha256 = pin;
                 plankTransportToken = QString::fromLatin1(macLaunch.transportToken);
@@ -3785,7 +3789,8 @@ bool Session::startConnectionAsync(bool reconnecting,
             m_PlankClipboardEnabled =
                     PlankSharedScreen::policyFor(m_JoinAsViewer).syncsClipboard &&
                     m_Preferences->plankClipboardText &&
-                    (m_Computer->plankFeatureFlags & NvOutputTopology::ClipboardTextFeature) != 0;
+                    (macCapture ? macLaunch.clipboard :
+                     (m_Computer->plankFeatureFlags & NvOutputTopology::ClipboardTextFeature) != 0);
             m_PlankWorkerInstance = (m_Computer->plankFeatureFlags & NvOutputTopology::WorkerInstanceFeature) ?
                         http->workerInstance() : QString();
             m_PlankHostCertificateSha256 = plankTransportCertificateSha256;

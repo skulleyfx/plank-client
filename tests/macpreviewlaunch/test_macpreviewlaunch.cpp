@@ -14,6 +14,7 @@ private slots:
     void parsesSchemaFourReply();
     void rejectsOtherReplies();
     void picksSchemaFromHostVersion();
+    void asksForClipboardOnlyWhenAllowed();
 };
 
 static NvOutputTopology fixedCaptureTopology()
@@ -93,6 +94,13 @@ void TestMacPreviewLaunch::picksSchemaFromHostVersion()
     QCOMPARE(MacPreviewLaunch::displaySchemaFor("1.0.120"), 3);
     QCOMPARE(MacPreviewLaunch::displaySchemaFor("1.0.143"), 3);
     QCOMPARE(MacPreviewLaunch::displaySchemaFor("1.1.039"), 3);
+}
+
+void TestMacPreviewLaunch::asksForClipboardOnlyWhenAllowed()
+{
+    QCOMPARE(MacPreviewLaunch::expectedServices(3, true).value("clipboard"), QJsonValue(true));
+    QCOMPARE(MacPreviewLaunch::expectedServices(3, false).value("clipboard"), QJsonValue(false));
+    QVERIFY(!MacPreviewLaunch::expectedServices(2, true).contains("clipboard"));
 }
 
 QTEST_GUILESS_MAIN(TestMacPreviewLaunch)
