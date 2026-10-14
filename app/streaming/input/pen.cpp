@@ -449,6 +449,14 @@ void SdlInputHandler::removePenPositionHook()
 
 void SdlInputHandler::attachPenPressureSource(SDL_Window* window)
 {
+    // Off unless PLANK_WINTAB=1: on Culley's Intuos (client .56) opening a
+    // WinTab context stopped the pen reaching PLANK at all, presumably
+    // because the Wacom driver then routes the pen to WinTab instead of
+    // Windows Ink. Kept for a later attempt that reads position and contact
+    // from WinTab too.
+    if (qEnvironmentVariableIntValue("PLANK_WINTAB") == 0) {
+        return;
+    }
     const SDL_PropertiesID properties = SDL_GetWindowProperties(window);
     HWND hwnd = properties != 0 ?
                 reinterpret_cast<HWND>(SDL_GetPointerProperty(
