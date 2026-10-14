@@ -92,6 +92,10 @@ public:
      */
     void setPenSideButtonsSwapped(bool swapped);
 
+    // Windows: read the pen's position the way the mouse's is read (see pen.cpp).
+    static void installPenPositionHook();
+    static void removePenPositionHook();
+
     void sendText(QString& string);
 
     void handleRawHidControl(const unsigned char* data, unsigned int length);
@@ -274,6 +278,8 @@ private:
     Uint64 m_PenLastLogTime;
     bool m_PenPressureSeen;
     bool m_PenSideButtonsSwapped;
+    float m_PenSdlOffsetX;
+    float m_PenSdlOffsetY;
 
 #ifdef HAVE_LIBINPUT_TABLET
     std::unique_ptr<LinuxWacomInput> m_LinuxWacomInput;

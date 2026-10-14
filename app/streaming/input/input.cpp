@@ -43,6 +43,8 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs,
       m_PenLastLogTime(0),
       m_PenPressureSeen(false),
       m_PenSideButtonsSwapped(false),
+      m_PenSdlOffsetX(0.0f),
+      m_PenSdlOffsetY(0.0f),
       m_PointerRegionLockActive(false),
       m_PointerRegionLockToggledByUser(false),
       m_LocalToolbarAvailable(false),
@@ -58,6 +60,7 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs,
           (static_cast<std::uint64_t>(streamWidth) << 32) |
           static_cast<std::uint32_t>(streamHeight))
 {
+    installPenPositionHook();
     // System keys are always captured when running without a DE
     if (!WMUtils::isRunningDesktopEnvironment()) {
         m_CaptureSystemKeysMode = StreamingPreferences::CSK_ALWAYS;
@@ -138,6 +141,7 @@ QSize SdlInputHandler::streamDimensions() const
 
 SdlInputHandler::~SdlInputHandler()
 {
+    removePenPositionHook();
 #ifdef HAVE_LIBINPUT_TABLET
     m_LinuxWacomInput.reset();
     m_LinuxRawWacomInput.reset();

@@ -24,6 +24,87 @@
 #include <algorithm>
 #include <cmath>
 
+#ifdef Q_OS_WIN32
+#include <windows.h>
+#include <atomic>
+
+namespace {
+
+// Where Windows itself puts the pen, in client pixels of the window it is
+// over. SDL computes a pen position of its own from the tablet's raw himetric
+// coordinates and the tablet-to-screen mapping, and that drifts from where the
+// cursor really is (down and right, more toward the edges) whenever the Wacom
+// mapping, "force proportions" or display scaling do not match its sums. The
+// mouse uses the pointer's pixel location and is exact, so the pen uses the
+// same one. The hook runs on the event thread just before SDL turns the
+// pointer message into pen events, so the stored point is the one those
+// events belong to.
+std::atomic<HWND> s_PenPixelWindow {nullptr};
+std::atomic<long> s_PenPixelX {0};
+std::atomic<long> s_PenPixelY {0};
+
+bool SDLCALL plankPenMessageHook(void*, MSG* msg)
+{
+    switch (msg->message) {
+    case WM_POINTERENTER:
+    case WM_POINTERDOWN:
+    case WM_POINTERUPDATE:
+    case WM_POINTERUP: {
+        const UINT32 pointerId = GET_POINTERID_WPARAM(msg->wParam);
+        POINTER_INPUT_TYPE pointerType = PT_POINTER;
+        POINTER_INFO info;
+        if (GetPointerType(pointerId, &pointerType) && pointerType == PT_PEN &&
+                GetPointerInfo(pointerId, &info)) {
+            POINT position = info.ptPixelLocation;
+            if (ScreenToClient(msg->hwnd, &position)) {
+                s_PenPixelX.store(position.x);
+                s_PenPixelY.store(position.y);
+                s_PenPixelWindow.store(msg->hwnd);
+            }
+        }
+        break;
+    }
+    case WM_POINTERLEAVE:
+        s_PenPixelWindow.store(nullptr);
+        break;
+    default:
+        break;
+    }
+    return true; // SDL still handles every message
+}
+
+} // namespace
+
+void SdlInputHandler::installPenPositionHook()
+{
+    SDL_SetWindowsMessageHook(plankPenMessageHook, nullptr);
+}
+
+void SdlInputHandler::removePenPositionHook()
+{
+    SDL_SetWindowsMessageHook(nullptr, nullptr);
+    s_PenPixelWindow.store(nullptr);
+}
+
+static bool windowsPenPixelPosition(SDL_Window* window, float& x, float& y)
+{
+    const SDL_PropertiesID properties = SDL_GetWindowProperties(window);
+    HWND hwnd = properties != 0 ?
+                reinterpret_cast<HWND>(SDL_GetPointerProperty(
+                    properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr)) :
+                nullptr;
+    if (hwnd == nullptr || s_PenPixelWindow.load() != hwnd) {
+        return false;
+    }
+    x = static_cast<float>(s_PenPixelX.load());
+    y = static_cast<float>(s_PenPixelY.load());
+    return true;
+}
+#else
+void SdlInputHandler::installPenPositionHook() {}
+void SdlInputHandler::removePenPositionHook() {}
+#endif
+
 void SdlInputHandler::resetPenState()
 {
     m_PenTipDown = false;
@@ -91,6 +172,17 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
             return false;
         }
 
+#ifdef Q_OS_WIN32
+        float pixelX = windowX;
+        float pixelY = windowY;
+        if (windowsPenPixelPosition(window, pixelX, pixelY)) {
+            m_PenSdlOffsetX = windowX - pixelX;
+            m_PenSdlOffsetY = windowY - pixelY;
+            windowX = pixelX;
+            windowY = pixelY;
+        }
+#endif
+
         QPointF streamPoint;
         if (!PlankPresentation::mapWindowPointToStream(
                     QPointF(windowX, windowY),
@@ -121,7 +213,8 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
         m_PenLastLogTime = now;
         SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
                     "PLANK pen: event=%u tip=%s pressure=%.3f%s distance=%.3f "
-                    "tilt=%u rotation=%u buttons=0x%x eraser=%s at %.3f,%.3f",
+                    "tilt=%u rotation=%u buttons=0x%x eraser=%s at %.3f,%.3f "
+                    "(SDL position was %+.0f,%+.0f px off)",
                     eventType, m_PenTipDown ? "down" : "up",
                     pressureOrDistance,
                     m_PenPressureSeen ? "" : " (no pressure axis reported)",
@@ -129,7 +222,8 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
                     static_cast<unsigned>(m_PenTilt),
                     static_cast<unsigned>(m_PenRotation),
                     m_PenButtons, m_PenEraser ? "yes" : "no",
-                    normalizedX, normalizedY);
+                    normalizedX, normalizedY,
+                    m_PenSdlOffsetX, m_PenSdlOffsetY);
     }
     const unsigned char toolType = m_PenEraser ? LI_TOOL_TYPE_ERASER : LI_TOOL_TYPE_PEN;
 
