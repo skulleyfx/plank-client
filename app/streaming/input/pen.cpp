@@ -63,7 +63,10 @@ constexpr UINT CXO_SYSTEM = 0x0001;
 constexpr UINT CXO_MESSAGES = 0x0004;
 constexpr WTPKT PK_STATUS = 0x0002;
 constexpr WTPKT PK_TIME = 0x0004;
+constexpr WTPKT PK_X = 0x0080;
+constexpr WTPKT PK_Y = 0x0100;
 constexpr WTPKT PK_NORMAL_PRESSURE = 0x0400;
+constexpr UINT TPS_PROXIMITY = 0x0001;
 constexpr UINT WT_DEFBASE = 0x7FF0;
 constexpr UINT WT_PACKET = WT_DEFBASE + 0;
 
@@ -123,6 +126,7 @@ using WTOpenWFn = HCTX (WINAPI*)(HWND, LOGCONTEXTW*, BOOL);
 using WTCloseFn = BOOL (WINAPI*)(HCTX);
 using WTPacketFn = BOOL (WINAPI*)(HCTX, UINT, LPVOID);
 using WTOverlapFn = BOOL (WINAPI*)(HCTX, BOOL);
+using WTQueueSizeSetFn = BOOL (WINAPI*)(HCTX, int);
 
 HMODULE s_Module = nullptr;
 WTInfoWFn s_Info = nullptr;
@@ -130,19 +134,19 @@ WTOpenWFn s_Open = nullptr;
 WTCloseFn s_Close = nullptr;
 WTPacketFn s_Packet = nullptr;
 WTOverlapFn s_Overlap = nullptr;
+WTQueueSizeSetFn s_QueueSizeSet = nullptr;
 HCTX s_Context = nullptr;
 HWND s_ContextWindow = nullptr;
-float s_PressureMax = 0.0f;
+float s_PressureMin = 0.0f;
+float s_PressureRange = 0.0f;
 
-// Latest WinTab pressure (0..1) and when it arrived, in SDL ticks. Both are
-// written and read on the event thread.
+// Latest WinTab pressure (0..1), written and read on the event thread. It
+// stays valid from the first packet until the pen leaves the tablet or the
+// window, so a stroke never switches between WinTab's fine steps and Windows
+// Ink's coarse ones part way through.
 float s_Pressure = 0.0f;
-Uint64 s_PressureTicks = 0;
+bool s_PressureValid = false;
 bool s_LoggedFirstPacket = false;
-
-// A packet older than this belongs to an earlier touch, or the pen has left
-// the tablet; Windows Ink pressure is used instead.
-constexpr Uint64 FreshMs = 100;
 
 void close()
 {
@@ -151,7 +155,7 @@ void close()
     }
     s_Context = nullptr;
     s_ContextWindow = nullptr;
-    s_PressureTicks = 0;
+    s_PressureValid = false;
 }
 
 void open(HWND hwnd)
@@ -173,6 +177,8 @@ void open(HWND hwnd)
         s_Close = reinterpret_cast<WTCloseFn>(GetProcAddress(s_Module, "WTClose"));
         s_Packet = reinterpret_cast<WTPacketFn>(GetProcAddress(s_Module, "WTPacket"));
         s_Overlap = reinterpret_cast<WTOverlapFn>(GetProcAddress(s_Module, "WTOverlap"));
+        s_QueueSizeSet = reinterpret_cast<WTQueueSizeSetFn>(
+                    GetProcAddress(s_Module, "WTQueueSizeSet"));
     }
     if (s_Info == nullptr || s_Open == nullptr || s_Close == nullptr ||
             s_Packet == nullptr) {
@@ -200,7 +206,9 @@ void open(HWND hwnd)
     context.lcOptions = (context.lcOptions | CXO_MESSAGES) & ~CXO_SYSTEM;
     context.lcPktData = PK_STATUS | PK_TIME | PK_NORMAL_PRESSURE;
     context.lcPktMode = 0;
-    context.lcMoveMask = PK_NORMAL_PRESSURE;
+    // Motion as well as pressure changes produce packets, so a stroke at
+    // steady pressure keeps delivering them.
+    context.lcMoveMask = PK_X | PK_Y | PK_NORMAL_PRESSURE;
     context.lcMsgBase = WT_DEFBASE;
     s_Context = s_Open(hwnd, &context, TRUE);
     if (s_Context == nullptr) {
@@ -209,7 +217,13 @@ void open(HWND hwnd)
         return;
     }
     s_ContextWindow = hwnd;
-    s_PressureMax = static_cast<float>(pressure.axMax);
+    // The default queue holds about 40 ms of packets; a busy event thread
+    // would lose some.
+    if (s_QueueSizeSet != nullptr) {
+        s_QueueSizeSet(s_Context, 128);
+    }
+    s_PressureMin = static_cast<float>(pressure.axMin);
+    s_PressureRange = static_cast<float>(pressure.axMax - pressure.axMin);
     s_LoggedFirstPacket = false;
     SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
                 "PLANK pen: Wacom WinTab pressure enabled (%ld levels)",
@@ -225,10 +239,16 @@ void handleMessage(const MSG* msg)
             reinterpret_cast<HCTX>(msg->lParam) == s_Context) {
         PACKET packet = {};
         if (s_Packet(s_Context, static_cast<UINT>(msg->wParam), &packet)) {
+            if (packet.pkStatus & TPS_PROXIMITY) {
+                // The pen has left the tablet.
+                s_PressureValid = false;
+                return;
+            }
             s_Pressure = std::clamp(
-                        static_cast<float>(packet.pkNormalPressure) / s_PressureMax,
+                        (static_cast<float>(packet.pkNormalPressure) - s_PressureMin) /
+                            s_PressureRange,
                         0.0f, 1.0f);
-            s_PressureTicks = SDL_GetTicks();
+            s_PressureValid = true;
             if (!s_LoggedFirstPacket) {
                 s_LoggedFirstPacket = true;
                 SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
@@ -243,13 +263,15 @@ void handleMessage(const MSG* msg)
         // never sees it.)
         s_Overlap(s_Context, TRUE);
     }
+    else if (msg->message == WM_POINTERLEAVE) {
+        s_PressureValid = false;
+    }
 }
 
 // The WinTab pressure for an event happening now, or -1 when there is none.
 float freshPressure()
 {
-    if (s_Context == nullptr || s_PressureTicks == 0 ||
-            SDL_GetTicks() - s_PressureTicks > FreshMs) {
+    if (s_Context == nullptr || !s_PressureValid) {
         return -1.0f;
     }
     return s_Pressure;
@@ -371,6 +393,9 @@ static bool windowsPenPixelPosition(SDL_Window* window, Uint64 timestamp,
     if (hwnd == nullptr) {
         return false;
     }
+    // SDL can replace a window's native handle (a renderer fallback, for
+    // one); follow it so WinTab packets keep arriving.
+    Wintab::open(hwnd);
     // Newest first: the sample for an event is recent unless the queue is
     // very far behind, and then SDL's own position is the fallback.
     for (int i = 1; i <= PenPixelSampleCount; i++) {
