@@ -401,9 +401,14 @@ void noteInkPen()
 // Whether WinTab is driving the pen right now.
 bool driving()
 {
-    if (s_Driving && SDL_GetTicks() - s_LastPacketTicks > PacketQuietMs) {
+    // The driver sends nothing while the pen is held still, so silence with
+    // the tip down is a held stroke, not a pen that has gone: only a silent
+    // pen that is up stops driving (and releases the mouse).
+    if (s_Driving && s_Pressure <= 0.0f &&
+            SDL_GetTicks() - s_LastPacketTicks > PacketQuietMs) {
         stopDriving();
         s_InProximity = false;
+        s_StreakStartTicks = 0;
     }
     return s_Driving && s_InProximity;
 }
@@ -636,6 +641,9 @@ void SdlInputHandler::handleWintabPen(bool outOfProximity, float pressure,
                                       unsigned buttons, bool eraser)
 {
     if (!isPenCaptureAvailable()) {
+        // Nothing can reach the host, but local state must not stay down.
+        m_PenTipDown = false;
+        m_WintabPenWindow = nullptr;
         return;
     }
     // The window under the cursor, which the driver keeps on the pen.
