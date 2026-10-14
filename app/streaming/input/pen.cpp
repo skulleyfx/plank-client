@@ -44,14 +44,20 @@ std::atomic<float> s_PenPixelX {0.0f};
 std::atomic<float> s_PenPixelY {0.0f};
 // Sub-pixel position: the HIMETRIC location mapped to pixels carries the
 // fraction ptPixelLocation lacks, but for a pen it can sit a pixel or two
-// off (the Wacom driver's own mapping), and the error changes slowly across
-// the screen. The difference to the whole-pixel position is followed with a
-// slow average, reset when the pen arrives, and taken off the mapped point;
-// the result never strays more than a pixel from the whole-pixel position.
-// Only the event thread touches these.
+// off (the Wacom driver's own mapping), and the error depends on where on
+// the screen the pen is, not on time. The difference to the whole-pixel
+// position is learned over the session, weighted by distance moved so that a
+// slow stroke inside one pixel does not teach it that pixel's rounding, and
+// is taken off the mapped point; the result never strays more than a pixel
+// from the whole-pixel position. It starts again only when the tablet or
+// display mapping changes. Only the event thread touches these.
 bool s_PenOffsetValid = false;
 double s_PenOffsetX = 0.0;
 double s_PenOffsetY = 0.0;
+double s_PenLastMappedX = 0.0;
+double s_PenLastMappedY = 0.0;
+RECT s_PenDeviceRect = {};
+RECT s_PenDisplayRect = {};
 // Size of the raw mapping error, for the pen log line.
 std::atomic<float> s_PenMapErrorMax {0.0f};
 std::atomic<float> s_PenMapErrorLast {0.0f};
@@ -312,9 +318,6 @@ bool SDLCALL plankPenMessageHook(void*, MSG* msg)
                 // one-pixel stairs; see s_PenOffsetValid for the fraction.
                 float x = static_cast<float>(position.x);
                 float y = static_cast<float>(position.y);
-                if (msg->message == WM_POINTERENTER || msg->message == WM_POINTERDOWN) {
-                    s_PenOffsetValid = false;
-                }
                 RECT deviceRect;
                 RECT displayRect;
                 if (GetPointerDeviceRects(info.sourceDevice, &deviceRect, &displayRect) &&
@@ -339,16 +342,28 @@ bool SDLCALL plankPenMessageHook(void*, MSG* msg)
                         // The whole-pixel position truncates, so a correct
                         // mapping sits up to a pixel right of / below it:
                         // aim the offset at half a pixel.
-                        if (!s_PenOffsetValid) {
+                        if (!s_PenOffsetValid ||
+                                !EqualRect(&deviceRect, &s_PenDeviceRect) ||
+                                !EqualRect(&displayRect, &s_PenDisplayRect)) {
                             s_PenOffsetX = errorX - 0.5;
                             s_PenOffsetY = errorY - 0.5;
+                            s_PenDeviceRect = deviceRect;
+                            s_PenDisplayRect = displayRect;
                             s_PenOffsetValid = true;
                         }
                         else {
-                            constexpr double Follow = 0.05;
-                            s_PenOffsetX += Follow * ((errorX - 0.5) - s_PenOffsetX);
-                            s_PenOffsetY += Follow * ((errorY - 0.5) - s_PenOffsetY);
+                            // Screen position, not client: the error belongs
+                            // to the screen, whichever window the pen is over.
+                            const double screenX = fx + origin.x;
+                            const double screenY = fy + origin.y;
+                            const double moved = std::hypot(screenX - s_PenLastMappedX,
+                                                            screenY - s_PenLastMappedY);
+                            const double follow = std::min(1.0, moved / 64.0);
+                            s_PenOffsetX += follow * ((errorX - 0.5) - s_PenOffsetX);
+                            s_PenOffsetY += follow * ((errorY - 0.5) - s_PenOffsetY);
                         }
+                        s_PenLastMappedX = fx + origin.x;
+                        s_PenLastMappedY = fy + origin.y;
                         x = static_cast<float>(std::clamp(fx - s_PenOffsetX, x - 0.5, x + 1.5));
                         y = static_cast<float>(std::clamp(fy - s_PenOffsetY, y - 0.5, y + 1.5));
                     }
