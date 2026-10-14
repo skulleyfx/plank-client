@@ -871,6 +871,44 @@ Session::Session(NvComputer* computer, NvApp& app,
         // chroma sampling, and identity mapping; otherwise the same profile
         // falls back to FFmpeg software decoding without changing formats.
     }
+
+    // A two-screen session the host refuses or cannot start would otherwise be
+    // retried on every connect, and the only way back to one screen is the
+    // stream toolbar, which never appears.
+    connect(this, &Session::displayLaunchError, this, [this](QString) {
+        abandonTwoScreensWithoutPicture("the connection failed");
+    }, Qt::DirectConnection);
+}
+
+/**
+ * @brief Switch this workstation back to one screen after a two-screen
+ * session ended before showing a picture.
+ *
+ * Does nothing for one-screen sessions, once a picture has been shown, or
+ * when the session is being replaced by a toolbar screen change.
+ *
+ * @param reason Short description for the log.
+ */
+void Session::abandonTwoScreensWithoutPicture(const char* reason)
+{
+    if (!m_UseMultiDisplayPresentation || m_TwoScreenPictureSeen.load() ||
+            m_RestartForDisplayChange || m_TwoScreensAbandoned.exchange(true)) {
+        return;
+    }
+    {
+        QWriteLocker lock(&m_Computer->lock);
+        if (!m_Computer->plankTwoScreens) {
+            return;
+        }
+        m_Computer->plankTwoScreens = false;
+    }
+    if (m_ComputerManager != nullptr) {
+        m_ComputerManager->clientSideAttributeUpdated(m_Computer);
+    }
+    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                "Two-screen session for %s ended without a picture (%s); "
+                "the next connection uses one screen",
+                qPrintable(m_Computer->name), reason);
 }
 
 Session::~Session()
@@ -5185,6 +5223,7 @@ void Session::execInternal()
         if (m_UseMultiDisplayPresentation && !twoScreenPictureSeen) {
             if (m_CurrentRenderedFps.load(std::memory_order_relaxed) > 0.0f) {
                 twoScreenPictureSeen = true;
+                m_TwoScreenPictureSeen.store(true);
             }
             else if (twoScreenDeadline != 0 && SDL_GetTicks() >= twoScreenDeadline) {
                 twoScreenDeadline = 0;
@@ -5192,12 +5231,13 @@ void Session::execInternal()
                 // Free the mouse and keyboard so the machine stays usable.
                 SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                              "No picture after %d seconds in a two-screen session; releasing input. "
-                             "Turn off \"Use two screens\" in Settings to stream one screen.",
+                             "Switching this workstation back to one screen.",
                              (int) (TwoScreenPictureTimeoutMs / 1000));
                 m_InputHandler->setCaptureActive(false);
+                abandonTwoScreensWithoutPicture("no picture");
                 setPlankReconnectStatus(
                             "This computer could not show a two-screen session. "
-                            "Disconnect and turn off \"Use two screens\" in Settings.", true);
+                            "PLANK switched back to one screen: disconnect and connect again.", true);
             }
         }
 
@@ -5842,6 +5882,7 @@ DispatchDeferredCleanup:
     // before allowing the UI to continue execution.
     delete m_InputHandler;
     m_InputHandler = nullptr;
+    abandonTwoScreensWithoutPicture("the session ended");
     if (!m_RestartForDisplayChange) {
         clearPlankReconnectCredentials();
     }

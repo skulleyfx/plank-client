@@ -151,6 +151,8 @@ public:
 
     Q_PROPERTY(bool restartForDisplayChange READ restartForDisplayChange)
 
+    void abandonTwoScreensWithoutPicture(const char* reason);
+
     bool restartForDisplayChange() const
     {
         return m_RestartForDisplayChange;
@@ -477,6 +479,10 @@ private:
     QVector<ClientDisplaySnapshot> m_ClientDisplays;
     SDL_DisplayID m_TargetDisplayId = 0;
     bool m_UseMultiDisplayPresentation = false;
+    // Set once a two-screen session shows a picture. A two-screen session that
+    // ends without one switches the workstation back to one screen.
+    std::atomic<bool> m_TwoScreenPictureSeen{false};
+    std::atomic<bool> m_TwoScreensAbandoned{false};
     bool m_PresentationFullscreen = false;
     bool m_HasWindowedPresentationGeometry = false;
     QVector<SDL_Window*> m_SecondaryWindows;
