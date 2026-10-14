@@ -479,10 +479,14 @@ private:
     QVector<ClientDisplaySnapshot> m_ClientDisplays;
     SDL_DisplayID m_TargetDisplayId = 0;
     bool m_UseMultiDisplayPresentation = false;
-    // Set once a two-screen session shows a picture. A two-screen session that
-    // ends without one switches the workstation back to one screen.
+    // Set by the first decoded frame. A two-screen session that fails for a
+    // two-screen reason before then switches the workstation back to one
+    // screen (abandonTwoScreensWithoutPicture).
     std::atomic<bool> m_TwoScreenPictureSeen{false};
     std::atomic<bool> m_TwoScreensAbandoned{false};
+    // Set when the no-picture watchdog fires; checked again at teardown in
+    // case the picture arrived late.
+    bool m_TwoScreenNoPicture = false;
     bool m_PresentationFullscreen = false;
     bool m_HasWindowedPresentationGeometry = false;
     QVector<SDL_Window*> m_SecondaryWindows;

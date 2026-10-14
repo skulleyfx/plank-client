@@ -630,6 +630,10 @@ int Session::drSubmitDecodeUnit(PDECODE_UNIT du)
         if (decoder != nullptr) {
             int ret = decoder->submitDecodeUnit(du);
             SDL_UnlockSpinlock(&s_ActiveSession->m_DecoderLock);
+            if (ret == DR_OK &&
+                    !s_ActiveSession->m_TwoScreenPictureSeen.load(std::memory_order_relaxed)) {
+                s_ActiveSession->m_TwoScreenPictureSeen.store(true);
+            }
             return ret;
         }
         else {
@@ -871,21 +875,18 @@ Session::Session(NvComputer* computer, NvApp& app,
         // chroma sampling, and identity mapping; otherwise the same profile
         // falls back to FFmpeg software decoding without changing formats.
     }
-
-    // A two-screen session the host refuses or cannot start would otherwise be
-    // retried on every connect, and the only way back to one screen is the
-    // stream toolbar, which never appears.
-    connect(this, &Session::displayLaunchError, this, [this](QString) {
-        abandonTwoScreensWithoutPicture("the connection failed");
-    }, Qt::DirectConnection);
 }
 
 /**
  * @brief Switch this workstation back to one screen after a two-screen
  * session ended before showing a picture.
  *
- * Does nothing for one-screen sessions, once a picture has been shown, or
- * when the session is being replaced by a toolbar screen change.
+ * Without this the client asks for two screens on every connect, and the only
+ * way back, the stream toolbar, never appears. Called only for failures that
+ * are about two screens: the host refusing the layout, the second monitor's
+ * window, the decoder, or no picture at all. Does nothing for one-screen
+ * sessions, once a picture has been decoded, or when the session is being
+ * replaced by a toolbar screen change.
  *
  * @param reason Short description for the log.
  */
@@ -3571,11 +3572,12 @@ bool Session::startConnectionAsync(bool reconnecting,
                     statusMessage ==
                         QStringLiteral("Host display layout transition is currently unavailable");
             if (twoScreenLayoutRefused) {
+                abandonTwoScreensWithoutPicture("the workstation refused two screens");
                 emit displayLaunchError(
                             tr("The workstation cannot give you two screens. It needs two "
                                "displays of its own, and a display added by other "
-                               "remote-desktop software does not count. Switch back to one "
-                               "screen on the stream toolbar."));
+                               "remote-desktop software does not count. PLANK switched this "
+                               "workstation back to one screen; connect again."));
                 qInfo() << "The workstation refused a two-screen layout; it has fewer than two displays of its own";
                 return false;
             }
@@ -4855,6 +4857,7 @@ void Session::execInternal()
                 SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                              "Failed to create PLANK fullscreen surface for client output %u: %s",
                              display.displayId, SDL_GetError());
+                abandonTwoScreensWithoutPicture("no window for the second monitor");
                 emit displayLaunchError(
                     tr("Unable to create a fullscreen surface for the second client monitor."));
                 for (SDL_Window* window : std::as_const(m_SecondaryWindows)) {
@@ -4880,6 +4883,7 @@ void Session::execInternal()
             if (!placeFullscreenWindowOnDisplay(secondary,
                                                 display.displayId)) {
                 SDL_DestroyWindow(secondary);
+                abandonTwoScreensWithoutPicture("the second monitor's window could not be placed");
                 emit displayLaunchError(
                     tr("Unable to place the second fullscreen surface on its client monitor."));
                 for (SDL_Window* window : std::as_const(m_SecondaryWindows)) {
@@ -5221,9 +5225,9 @@ void Session::execInternal()
         serviceNdi(SDL_GetTicks());
 
         if (m_UseMultiDisplayPresentation && !twoScreenPictureSeen) {
-            if (m_CurrentRenderedFps.load(std::memory_order_relaxed) > 0.0f) {
+            if (m_TwoScreenPictureSeen.load() ||
+                    m_CurrentRenderedFps.load(std::memory_order_relaxed) > 0.0f) {
                 twoScreenPictureSeen = true;
-                m_TwoScreenPictureSeen.store(true);
             }
             else if (twoScreenDeadline != 0 && SDL_GetTicks() >= twoScreenDeadline) {
                 twoScreenDeadline = 0;
@@ -5231,13 +5235,13 @@ void Session::execInternal()
                 // Free the mouse and keyboard so the machine stays usable.
                 SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                              "No picture after %d seconds in a two-screen session; releasing input. "
-                             "Switching this workstation back to one screen.",
+                             "One screen will be used if it ends without a picture.",
                              (int) (TwoScreenPictureTimeoutMs / 1000));
                 m_InputHandler->setCaptureActive(false);
-                abandonTwoScreensWithoutPicture("no picture");
+                m_TwoScreenNoPicture = true;
                 setPlankReconnectStatus(
                             "This computer could not show a two-screen session. "
-                            "PLANK switched back to one screen: disconnect and connect again.", true);
+                            "Disconnect and connect again: PLANK will use one screen.", true);
             }
         }
 
@@ -5659,6 +5663,7 @@ void Session::execInternal()
                     SDL_UnlockSpinlock(&m_DecoderLock);
                     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                                  "Failed to recreate decoder after reset");
+                    abandonTwoScreensWithoutPicture("the decoder could not start");
                     emit displayLaunchError(tr("Unable to initialize video decoder. Please check your streaming settings and try again."));
                     goto DispatchDeferredCleanup;
                 }
@@ -5882,7 +5887,9 @@ DispatchDeferredCleanup:
     // before allowing the UI to continue execution.
     delete m_InputHandler;
     m_InputHandler = nullptr;
-    abandonTwoScreensWithoutPicture("the session ended");
+    if (m_TwoScreenNoPicture) {
+        abandonTwoScreensWithoutPicture("no picture");
+    }
     if (!m_RestartForDisplayChange) {
         clearPlankReconnectCredentials();
     }
