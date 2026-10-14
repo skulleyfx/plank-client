@@ -19,7 +19,9 @@ namespace MacPreviewLaunch {
 // Unknown or unreadable versions get the newest schema.
 inline int launchSchemaFor(const QString& hostVersion)
 {
-    const QStringList parts = hostVersion.split(QLatin1Char('.'));
+    // A branch build carries a suffix ("1.0.143-culley-x"); only the
+    // numbers decide.
+    const QStringList parts = hostVersion.section(QLatin1Char('-'), 0, 0).split(QLatin1Char('.'));
     bool ok0 = false, ok1 = false, ok2 = false;
     const int major = parts.value(0).toInt(&ok0);
     const int minor = parts.value(1).toInt(&ok1);
@@ -34,7 +36,7 @@ inline int launchSchemaFor(const QString& hostVersion)
 inline int displaySchemaFor(const QString& hostVersion)
 {
     return launchSchemaFor(hostVersion) >= 3 ||
-            hostVersion.section(QLatin1Char('.'), 2, 2).toInt() >= 120 ? 3 : 2;
+            hostVersion.section(QLatin1Char('-'), 0, 0).section(QLatin1Char('.'), 2, 2).toInt() >= 120 ? 3 : 2;
 }
 
 inline QJsonObject request(const NvOutputTopology& topology, int bitrateKbps,

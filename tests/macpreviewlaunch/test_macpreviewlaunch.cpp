@@ -86,6 +86,9 @@ void TestMacPreviewLaunch::picksSchemaFromHostVersion()
     QCOMPARE(MacPreviewLaunch::launchSchemaFor("1.0.143"), 3);
     QCOMPARE(MacPreviewLaunch::launchSchemaFor("1.1.039"), 4);
     QCOMPARE(MacPreviewLaunch::launchSchemaFor(""), 4);
+    QCOMPARE(MacPreviewLaunch::launchSchemaFor("1.0.143-culley-x"), 3);
+    QCOMPARE(MacPreviewLaunch::launchSchemaFor("1.0.120-test"), 2);
+    QCOMPARE(MacPreviewLaunch::displaySchemaFor("1.0.110-x"), 2);
     QCOMPARE(MacPreviewLaunch::displaySchemaFor("1.0.106"), 2);
     QCOMPARE(MacPreviewLaunch::displaySchemaFor("1.0.120"), 3);
     QCOMPARE(MacPreviewLaunch::displaySchemaFor("1.0.143"), 3);
