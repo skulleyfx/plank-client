@@ -81,6 +81,17 @@ public:
      */
     bool isPenCaptureAvailable() const;
 
+    /**
+     * @brief Send the pen's first side button as the host's right-click button.
+     *
+     * Windows reports one side button, and treats it as right-click. A Windows
+     * host does the same with the first barrel button, but a Linux host turns
+     * it into BTN_STYLUS, which X maps to middle-click. For a Linux host the
+     * first and second barrel buttons are swapped so the button an artist
+     * uses for right-click still right-clicks.
+     */
+    void setPenSideButtonsSwapped(bool swapped);
+
     void sendText(QString& string);
 
     void handleRawHidControl(const unsigned char* data, unsigned int length);
@@ -262,6 +273,7 @@ private:
     bool m_PenEraser;
     Uint64 m_PenLastLogTime;
     bool m_PenPressureSeen;
+    bool m_PenSideButtonsSwapped;
 
 #ifdef HAVE_LIBINPUT_TABLET
     std::unique_ptr<LinuxWacomInput> m_LinuxWacomInput;

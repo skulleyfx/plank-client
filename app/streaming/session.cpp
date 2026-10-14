@@ -111,6 +111,44 @@ static int plankIdentityGbrBitDepth(int profile)
 #include <vector>
 
 #ifdef Q_OS_WIN32
+static void disablePlankPenFeedback(SDL_Window* window)
+{
+    // Windows draws a circle where the pen taps, presses and holds, or uses
+    // its side button. Every pen event is forwarded to the host, which shows
+    // its own cursor, so the circle only gets in the way of the picture.
+    const SDL_PropertiesID properties = SDL_GetWindowProperties(window);
+    HWND hwnd = properties != 0 ?
+                reinterpret_cast<HWND>(SDL_GetPointerProperty(
+                    properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr)) :
+                nullptr;
+    if (hwnd == nullptr) {
+        return;
+    }
+
+    static const FEEDBACK_TYPE feedbackTypes[] = {
+        FEEDBACK_TOUCH_CONTACTVISUALIZATION,
+        FEEDBACK_PEN_BARRELVISUALIZATION,
+        FEEDBACK_PEN_TAP,
+        FEEDBACK_PEN_DOUBLETAP,
+        FEEDBACK_PEN_PRESSANDHOLD,
+        FEEDBACK_PEN_RIGHTTAP,
+        FEEDBACK_TOUCH_TAP,
+        FEEDBACK_TOUCH_DOUBLETAP,
+        FEEDBACK_TOUCH_PRESSANDHOLD,
+        FEEDBACK_TOUCH_RIGHTTAP,
+        FEEDBACK_GESTURE_PRESSANDTAP,
+    };
+    BOOL enabled = FALSE;
+    for (FEEDBACK_TYPE feedbackType : feedbackTypes) {
+        if (!SetWindowFeedbackSetting(hwnd, feedbackType, 0,
+                                      sizeof(enabled), &enabled)) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Unable to turn off Windows pen feedback %d: %lu",
+                        static_cast<int>(feedbackType), GetLastError());
+        }
+    }
+}
+
 static void groupPlankSecondaryWindow(SDL_Window* primary,
                                       SDL_Window* secondary)
 {
@@ -4579,6 +4617,21 @@ void Session::execInternal()
                                          m_StreamConfig.width,
                                          m_StreamConfig.height);
     m_InputHandler->setViewOnly(m_JoinAsViewer);
+    {
+        // Our Windows hosts advertise two-screen capture and Mac hosts
+        // capture with ScreenCaptureKit; any other host that has described
+        // itself is a Linux host, where the first barrel button is
+        // middle-click.
+        const bool hostDescribed = m_Computer->plankFeatureFlags != 0;
+        const bool windowsHost =
+                (m_Computer->plankFeatureFlags &
+                 NvOutputTopology::TwoScreenCaptureFeature) != 0;
+        const bool macHost =
+                m_Computer->plankCaptureSource ==
+                StreamingPreferences::PLANK_CAPTURE_SCREENCAPTUREKIT;
+        m_InputHandler->setPenSideButtonsSwapped(
+                hostDescribed && !windowsHost && !macHost);
+    }
     m_SharedScreenPanel.setViewer(m_JoinAsViewer);
     m_ViewerInputAllowed.store(false);
 
@@ -4770,6 +4823,7 @@ void Session::execInternal()
             }
 #ifdef Q_OS_WIN32
             groupPlankSecondaryWindow(m_Window, secondary);
+            disablePlankPenFeedback(secondary);
 #endif
             SDL_SetWindowFullscreenMode(secondary, nullptr);
             SDL_SetWindowFullscreen(secondary, true);
@@ -4847,6 +4901,9 @@ void Session::execInternal()
     }
 #endif
 
+#ifdef Q_OS_WIN32
+    disablePlankPenFeedback(m_Window);
+#endif
     m_InputHandler->setWindow(m_Window);
     rebuildPresentationLayout();
 

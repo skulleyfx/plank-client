@@ -189,6 +189,17 @@ void SdlInputHandler::handlePenMotionEvent(SDL_PenMotionEvent* event)
                  window, event->x, event->y);
 }
 
+void SdlInputHandler::setPenSideButtonsSwapped(bool swapped)
+{
+    if (m_PenSideButtonsSwapped != swapped) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
+                    "Pen side buttons %s for this host",
+                    swapped ? "swapped (first side button right-clicks)" : "as sent");
+    }
+    m_PenSideButtonsSwapped = swapped;
+    m_PenButtons = 0;
+}
+
 void SdlInputHandler::handlePenButtonEvent(SDL_PenButtonEvent* event)
 {
     if (!isPenCaptureAvailable()) {
@@ -202,10 +213,10 @@ void SdlInputHandler::handlePenButtonEvent(SDL_PenButtonEvent* event)
     unsigned char mask = 0;
     switch (event->button) {
     case 1:
-        mask = LI_PEN_BUTTON_PRIMARY;
+        mask = m_PenSideButtonsSwapped ? LI_PEN_BUTTON_SECONDARY : LI_PEN_BUTTON_PRIMARY;
         break;
     case 2:
-        mask = LI_PEN_BUTTON_SECONDARY;
+        mask = m_PenSideButtonsSwapped ? LI_PEN_BUTTON_PRIMARY : LI_PEN_BUTTON_SECONDARY;
         break;
     case 3:
         mask = LI_PEN_BUTTON_TERTIARY;
