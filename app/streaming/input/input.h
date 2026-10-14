@@ -226,12 +226,14 @@ private:
     };
     std::vector<WaylandTabletCursorOutput> m_WaylandTabletCursorOutputs;
 #ifdef Q_OS_WIN32
-    // Shared-screen viewer only: draws the host pointer over the video.
+    // Draws the host pointer over the video: always for a shared-screen
+    // viewer, and for the controller while a pen is in use.
     std::unique_ptr<PlankWin32Cursor> m_Win32ViewerCursor;
 #endif
 
     void setCursorVisible(bool visible);
     void activateCompositorCursor();
+    void activateWin32PenCursor();
     PlankWaylandCursor* ensureWaylandTabletCursorAttached(
         SDL_Window* targetWindow);
     void reconcileWaylandTabletCursorOutputs();

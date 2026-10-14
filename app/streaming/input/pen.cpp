@@ -291,6 +291,11 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
     }
     const unsigned char toolType = m_PenEraser ? LI_TOOL_TYPE_ERASER : LI_TOOL_TYPE_PEN;
 
+    if (eventType != LI_TOUCH_EVENT_HOVER_LEAVE &&
+            eventType != LI_TOUCH_EVENT_CANCEL_ALL) {
+        activateWin32PenCursor();
+    }
+
     return LiSendPenEvent(eventType, toolType, m_PenButtons,
                           std::clamp(normalizedX, 0.0f, 1.0f),
                           std::clamp(normalizedY, 0.0f, 1.0f),

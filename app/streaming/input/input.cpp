@@ -901,6 +901,7 @@ void SdlInputHandler::activateCompositorCursor()
         output.cursor->setVisible(false);
         output.cursor->dispatchPending();
     }
+    updateWin32ViewerCursor(false);
     if (m_CompositorCursorRequestedVisible) {
         SDL_ShowCursor();
     } else {
@@ -908,6 +909,26 @@ void SdlInputHandler::activateCompositorCursor()
     }
     SDL_LogDebug(SDL_LOG_CATEGORY_INPUT,
                  "Restored Wayland compositor cursor for mouse input");
+}
+
+void SdlInputHandler::activateWin32PenCursor()
+{
+#ifdef Q_OS_WIN32
+    // A Linux host's Wacom driver applies Flame's Tablet Margins, so the host
+    // pointer lands a little away from where Windows would draw the pen. Show
+    // the host's pointer instead, as the Wayland client does, so what the
+    // artist sees is where Flame is. Mouse input switches back.
+    if (m_TabletCursorActive || m_ViewOnly || !m_LocalCursorSupported ||
+            !isCaptureActive()) {
+        return;
+    }
+    m_TabletCursorActive = true;
+    m_TabletCursorActivationSequence = m_AppliedRemoteCursorPositionSequence;
+    SDL_HideCursor();
+    updateWin32ViewerCursor(true);
+    SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
+                "Switched to host-authoritative pen cursor position");
+#endif
 }
 
 bool SdlInputHandler::mapRemoteCursorPositionToWindow(
@@ -1111,9 +1132,11 @@ bool SdlInputHandler::hostCursorSurfaceVisible()
 void SdlInputHandler::updateWin32ViewerCursor(bool imageChanged)
 {
 #ifdef Q_OS_WIN32
-    // Only a viewer in local cursor mode needs this: a controller's own
-    // pointer is the host pointer, and an embedded cursor is in the video.
-    if (!m_ViewOnly || !m_LocalCursorSupported) {
+    // A viewer in local cursor mode needs this, and so does a controller
+    // while a pen is in use (see activateWin32PenCursor()). Otherwise the
+    // controller's own pointer is the host pointer, and an embedded cursor is
+    // in the video.
+    if (!m_LocalCursorSupported || (!m_ViewOnly && !m_TabletCursorActive)) {
         // A viewer handed the mouse and keyboard drives the host with its own
         // pointer; drop the overlay so a stale host pointer is not left over.
         m_Win32ViewerCursor.reset();
