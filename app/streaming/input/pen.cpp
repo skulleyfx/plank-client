@@ -225,6 +225,7 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
             eventType != LI_TOUCH_EVENT_CANCEL_ALL) {
         const auto* output = presentationOutput(window);
         if (output == nullptr) {
+            penLeftPicture();
             return false;
         }
         int windowWidth = 0;
@@ -254,6 +255,7 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
                     m_PresentationLayout.canvasSize, output->canvasRect,
                     streamPoint, false)) {
             // The pen is outside the picture; nothing to draw on.
+            penLeftPicture();
             return false;
         }
         normalizedX = static_cast<float>(streamPoint.x() / streamSize.width());

@@ -234,6 +234,7 @@ private:
     void setCursorVisible(bool visible);
     void activateCompositorCursor();
     void activateWin32PenCursor();
+    void penLeftPicture();
     PlankWaylandCursor* ensureWaylandTabletCursorAttached(
         SDL_Window* targetWindow);
     void reconcileWaylandTabletCursorOutputs();

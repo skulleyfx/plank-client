@@ -931,6 +931,16 @@ void SdlInputHandler::activateWin32PenCursor()
 #endif
 }
 
+void SdlInputHandler::penLeftPicture()
+{
+#ifdef Q_OS_WIN32
+    // Off the picture (letterbox, window margin) the pen drives nothing on
+    // the host, so give the artist the local cursor back. The next pen event
+    // inside the picture switches to the host pointer again.
+    activateCompositorCursor();
+#endif
+}
+
 bool SdlInputHandler::mapRemoteCursorPositionToWindow(
         const RemoteCursorPosition& position, SDL_Window*& window,
         int& x, int& y) const
