@@ -455,7 +455,7 @@ ApplicationWindow {
             nicknameText.clear()
             nicknameText.manuallyEdited = false
             addHostLayout.currentIndex = 0
-            addVirtualMode1.currentIndex = 9
+            addVirtualMode1.currentIndex = 4
             addVirtualMode2.currentIndex = 1
             addScalingChoice.currentIndex = 1
             addCaptureSource.selectCaptureSource(0)
@@ -625,7 +625,7 @@ ApplicationWindow {
                 id: addVirtualMode1
                 Layout.fillWidth: true
                 enabled: (addCaptureSource.captureSource === 2 ? addHostLayout.currentIndex === 1 : addHostLayout.currentIndex >= 2)
-                currentIndex: 9
+                currentIndex: 4
                 model: addPcDialog.virtualModeChoices
                 delegate: ItemDelegate {
                     width: addVirtualMode1.width

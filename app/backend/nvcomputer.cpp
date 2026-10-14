@@ -58,7 +58,7 @@ NvComputer::NvComputer(NvAddress address, QString nickname, int videoProfile,
     this->plankProfileBitratesKbps = profileBitratesKbps;
     this->plankScalingMode = NvOutputTopology::ScaledSpanMode;
     this->plankHostLayout = NvOutputTopology::MatchClientHostLayout;
-    this->plankVirtualMode1 = QStringLiteral("3840x2160");
+    this->plankVirtualMode1 = QStringLiteral("2560x1440");
     this->plankVirtualMode2 = QStringLiteral("1280x2160");
     this->state = CS_UNKNOWN;
     this->authorizationState = AS_UNKNOWN;
@@ -157,11 +157,11 @@ NvComputer::NvComputer(QSettings& settings)
     this->plankHostLayoutChosen =
             settings.value(SER_HOSTLAYOUT_CHOSEN, false).toBool();
     this->plankVirtualMode1 =
-            settings.value(SER_VIRTUALMODE1, QStringLiteral("3840x2160")).toString();
+            settings.value(SER_VIRTUALMODE1, QStringLiteral("2560x1440")).toString();
     this->plankVirtualMode2 =
             settings.value(SER_VIRTUALMODE2, QStringLiteral("1280x2160")).toString();
     if (!NvOutputTopology::qualifiedVirtualModes().contains(this->plankVirtualMode1)) {
-        this->plankVirtualMode1 = QStringLiteral("3840x2160");
+        this->plankVirtualMode1 = QStringLiteral("2560x1440");
     }
     if (!NvOutputTopology::qualifiedVirtualModes().contains(this->plankVirtualMode2)) {
         this->plankVirtualMode2 = QStringLiteral("1280x2160");
