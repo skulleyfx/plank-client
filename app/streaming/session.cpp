@@ -4618,19 +4618,25 @@ void Session::execInternal()
                                          m_StreamConfig.height);
     m_InputHandler->setViewOnly(m_JoinAsViewer);
     {
-        // Our Windows hosts advertise two-screen capture and Mac hosts
-        // capture with ScreenCaptureKit; any other host that has described
-        // itself is a Linux host, where the first barrel button is
-        // middle-click.
-        const bool hostDescribed = m_Computer->plankFeatureFlags != 0;
-        const bool windowsHost =
-                (m_Computer->plankFeatureFlags &
-                 NvOutputTopology::TwoScreenCaptureFeature) != 0;
-        const bool macHost =
-                m_Computer->plankCaptureSource ==
-                StreamingPreferences::PLANK_CAPTURE_SCREENCAPTUREKIT;
-        m_InputHandler->setPenSideButtonsSwapped(
-                hostDescribed && !windowsHost && !macHost);
+        // Only Alan's Linux host maps the first barrel button to
+        // middle-click. Identify it positively: it gives the Linux output
+        // description (wopr on 1.0.143 reports 0x47FFFF) but never two-screen
+        // capture, which every one of our Windows hosts since 2026-09-15
+        // advertises, nor the fixed capture of a Mac host. A host that has
+        // not described itself keeps the buttons as sent.
+        const int flags = m_Computer->plankFeatureFlags;
+        const int linuxDescription = NvOutputTopology::OutputTopologyFeature |
+                NvOutputTopology::SelectedOutputFeature |
+                NvOutputTopology::UnifiedAbsoluteInputFeature;
+        const int notLinux = NvOutputTopology::TwoScreenCaptureFeature |
+                NvOutputTopology::FixedCaptureFeature;
+        const bool linuxHost =
+                (flags & linuxDescription) == linuxDescription &&
+                (flags & notLinux) == 0 &&
+                !NvOutputTopology::isFixedCaptureHost(flags) &&
+                m_Computer->plankCaptureSource !=
+                    StreamingPreferences::PLANK_CAPTURE_SCREENCAPTUREKIT;
+        m_InputHandler->setPenSideButtonsSwapped(linuxHost);
     }
     m_SharedScreenPanel.setViewer(m_JoinAsViewer);
     m_ViewerInputAllowed.store(false);
