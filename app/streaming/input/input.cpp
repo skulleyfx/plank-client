@@ -934,6 +934,9 @@ void SdlInputHandler::activateWin32PenCursor()
 
 void SdlInputHandler::penLeftPicture()
 {
+    // Off the picture nothing can be drawn: lift the tip on the host if it
+    // was down, and do not let a later press land at the old place.
+    liftPenAtLastPosition();
 #ifdef Q_OS_WIN32
     // Off the picture (letterbox, window margin) the pen drives nothing on
     // the host, so give the artist the local cursor back. The next pen event

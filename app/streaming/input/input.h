@@ -102,6 +102,7 @@ public:
     bool isWintabPenDriving();
     bool isWintabPenTarget();
     void checkWintabContact(float pressure);
+    void liftPenAtLastPosition();
 
     void sendText(QString& string);
 

@@ -611,6 +611,18 @@ void SdlInputHandler::checkWintabContact(float pressure)
     if (m_LastPenWindow == nullptr || (pressure > 0.0f) == m_PenContactSent) {
         return;
     }
+    // Only where the pen last drew: over the letterbox, the toolbar or
+    // another PLANK window there is nothing on the host to press.
+    POINT cursor;
+    const SDL_PropertiesID properties = SDL_GetWindowProperties(m_LastPenWindow);
+    HWND hwnd = properties != 0 ?
+                reinterpret_cast<HWND>(SDL_GetPointerProperty(
+                    properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr)) :
+                nullptr;
+    if (hwnd == nullptr || !GetCursorPos(&cursor) ||
+            GetAncestor(WindowFromPoint(cursor), GA_ROOT) != GetAncestor(hwnd, GA_ROOT)) {
+        return;
+    }
     m_PenWintabPressureForced = pressure;
     sendPenEvent(m_PenContactSent ? LI_TOUCH_EVENT_UP : LI_TOUCH_EVENT_DOWN,
                  m_LastPenWindow, m_LastPenX, m_LastPenY);
@@ -833,6 +845,10 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
     if (!isPenCaptureAvailable()) {
         return false;
     }
+    if ((eventType == LI_TOUCH_EVENT_HOVER_LEAVE ||
+            eventType == LI_TOUCH_EVENT_CANCEL_ALL) && m_PenContactSent) {
+        liftPenAtLastPosition();
+    }
 
     const QSize streamSize = streamDimensions();
     if (streamSize.isEmpty()) {
@@ -907,24 +923,25 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
     // With WinTab pressure, WinTab also decides contact: Windows Ink only
     // reports the tip down once it passes the driver's click threshold
     // (15-25% on Culley's Intuos), so the light start and end of every
-    // stroke were lost. Ink still gives the position and its events, which
-    // are renamed to match.
+    // stroke were lost. Ink still gives the position.
     if (m_PenWintabPressure >= 0.0f) {
         tipDown = m_PenWintabPressure > 0.0f;
-        switch (eventType) {
-        case LI_TOUCH_EVENT_DOWN:
-        case LI_TOUCH_EVENT_UP:
-        case LI_TOUCH_EVENT_MOVE:
-        case LI_TOUCH_EVENT_HOVER:
-            eventType = tipDown ?
-                        (m_PenContactSent ? LI_TOUCH_EVENT_MOVE : LI_TOUCH_EVENT_DOWN) :
-                        (m_PenContactSent ? LI_TOUCH_EVENT_UP : LI_TOUCH_EVENT_HOVER);
-            break;
-        default:
-            break;
-        }
     }
 #endif
+    // The event follows from what the host was last told, so it can never
+    // see two presses, or a hover with the tip still down.
+    switch (eventType) {
+    case LI_TOUCH_EVENT_DOWN:
+    case LI_TOUCH_EVENT_UP:
+    case LI_TOUCH_EVENT_MOVE:
+    case LI_TOUCH_EVENT_HOVER:
+        eventType = tipDown ?
+                    (m_PenContactSent ? LI_TOUCH_EVENT_MOVE : LI_TOUCH_EVENT_DOWN) :
+                    (m_PenContactSent ? LI_TOUCH_EVENT_UP : LI_TOUCH_EVENT_HOVER);
+        break;
+    default:
+        break;
+    }
     const float pressureOrDistance = tipDown ? contactPressure : m_PenDistance;
 
     // One line per second while a pen is in use. Without it a pen that draws
@@ -991,6 +1008,24 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
                           std::clamp(normalizedY, 0.0f, 1.0f),
                           std::clamp(pressureOrDistance, 0.0f, 1.0f),
                           0.0f, 0.0f, m_PenRotation, m_PenTilt) == 0;
+}
+
+void SdlInputHandler::liftPenAtLastPosition()
+{
+    // Lift the tip on the host where it last was, and forget that place so
+    // nothing can press there again until the pen draws in the picture.
+    SDL_Window* window = m_LastPenWindow;
+    m_LastPenWindow = nullptr;
+    if (!m_PenContactSent || window == nullptr) {
+        m_PenContactSent = false;
+        return;
+    }
+    const bool tipDown = m_PenTipDown;
+    m_PenTipDown = false;
+    sendPenEvent(LI_TOUCH_EVENT_UP, window, m_LastPenX, m_LastPenY);
+    m_PenTipDown = tipDown;
+    m_PenContactSent = false;
+    m_LastPenWindow = nullptr;
 }
 
 void SdlInputHandler::handlePenProximityEvent(SDL_PenProximityEvent* event)
