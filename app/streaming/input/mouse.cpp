@@ -15,7 +15,9 @@ void SdlInputHandler::handleMouseButtonEvent(SDL_MouseButtonEvent* event)
 
     if (event->which == SDL_TOUCH_MOUSEID ||
             (event->which == SDL_PEN_MOUSEID && isPenCaptureAvailable()) ||
-            isWintabPenDriving()) {
+            // A release still goes through, so a click the driver passed on
+            // before WinTab took over cannot stay held on the host.
+            (isWintabPenDriving() && event->down)) {
         // Ignore synthetic mouse events. A pen arrives as pen events and
         // again as mouse movement; sending both makes the host follow two
         // pointers at once, which an artist sees as a pen that jumps.

@@ -99,7 +99,8 @@ public:
     void attachPenPressureSource(SDL_Window* window);
     // Windows: WinTab drives the pen while Windows Ink is silent (pen.cpp).
     void handleWintabPen(bool outOfProximity, float pressure, unsigned buttons, bool eraser);
-    bool isWintabPenDriving() const;
+    bool isWintabPenDriving();
+    bool isWintabPenTarget();
 
     void sendText(QString& string);
 
