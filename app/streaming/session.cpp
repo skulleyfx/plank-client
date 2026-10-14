@@ -3618,6 +3618,8 @@ bool Session::startConnectionAsync(bool reconnecting,
                 for (int elapsedMs = 0;
                      elapsedMs < MaximumWaitMs && !started;
                      elapsedMs += RetryIntervalMs) {
+                    // Only the last attempt's answer decides the reset on timeout.
+                    twoScreensStillRefused = false;
                     for (int delayMs = 0;
                          delayMs < RetryIntervalMs;
                          delayMs += CancellationPollMs) {
