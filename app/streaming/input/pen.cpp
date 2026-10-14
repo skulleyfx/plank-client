@@ -42,10 +42,19 @@ namespace {
 std::atomic<HWND> s_PenPixelWindow {nullptr};
 std::atomic<float> s_PenPixelX {0.0f};
 std::atomic<float> s_PenPixelY {0.0f};
-// How many positions came with sub-pixel precision, and how many fell back
-// to whole pixels (logged with the pen line).
-std::atomic<unsigned> s_PenSubpixelCount {0};
-std::atomic<unsigned> s_PenWholePixelCount {0};
+// Sub-pixel position: the HIMETRIC location mapped to pixels carries the
+// fraction ptPixelLocation lacks, but for a pen it can sit a pixel or two
+// off (the Wacom driver's own mapping), and the error changes slowly across
+// the screen. The difference to the whole-pixel position is followed with a
+// slow average, reset when the pen arrives, and taken off the mapped point;
+// the result never strays more than a pixel from the whole-pixel position.
+// Only the event thread touches these.
+bool s_PenOffsetValid = false;
+double s_PenOffsetX = 0.0;
+double s_PenOffsetY = 0.0;
+// Size of the raw mapping error, for the pen log line.
+std::atomic<float> s_PenMapErrorMax {0.0f};
+std::atomic<float> s_PenMapErrorLast {0.0f};
 
 // Pressure from the Wacom driver's own interface (WinTab, wintab32.dll).
 // Windows Ink reports pen pressure in 1024 steps; at a light touch that leaves
@@ -300,12 +309,12 @@ bool SDLCALL plankPenMessageHook(void*, MSG* msg)
             if (ScreenToClient(msg->hwnd, &position) &&
                     ClientToScreen(msg->hwnd, &origin)) {
                 // ptPixelLocation is whole pixels, so a slow stroke moves in
-                // one-pixel stairs. The same point in HIMETRIC units, mapped
-                // through the pointer device's own rectangles, carries the
-                // fraction. It is used only when it agrees with the pixel
-                // position, which stays the reference.
+                // one-pixel stairs; see s_PenOffsetValid for the fraction.
                 float x = static_cast<float>(position.x);
                 float y = static_cast<float>(position.y);
+                if (msg->message == WM_POINTERENTER || msg->message == WM_POINTERDOWN) {
+                    s_PenOffsetValid = false;
+                }
                 RECT deviceRect;
                 RECT displayRect;
                 if (GetPointerDeviceRects(info.sourceDevice, &deviceRect, &displayRect) &&
@@ -319,17 +328,30 @@ bool SDLCALL plankPenMessageHook(void*, MSG* msg)
                             static_cast<double>(info.ptHimetricLocation.y - deviceRect.top) *
                             (displayRect.bottom - displayRect.top) /
                             (deviceRect.bottom - deviceRect.top) - origin.y;
-                    if (std::fabs(fx - x) <= 1.5 && std::fabs(fy - y) <= 1.5) {
-                        x = static_cast<float>(fx);
-                        y = static_cast<float>(fy);
-                        s_PenSubpixelCount.fetch_add(1);
+                    const double errorX = fx - x;
+                    const double errorY = fy - y;
+                    const float error = static_cast<float>(std::max(std::fabs(errorX), std::fabs(errorY)));
+                    s_PenMapErrorLast.store(error);
+                    if (error > s_PenMapErrorMax.load()) {
+                        s_PenMapErrorMax.store(error);
                     }
-                    else {
-                        s_PenWholePixelCount.fetch_add(1);
+                    if (error < 16.0f) {
+                        // The whole-pixel position truncates, so a correct
+                        // mapping sits up to a pixel right of / below it:
+                        // aim the offset at half a pixel.
+                        if (!s_PenOffsetValid) {
+                            s_PenOffsetX = errorX - 0.5;
+                            s_PenOffsetY = errorY - 0.5;
+                            s_PenOffsetValid = true;
+                        }
+                        else {
+                            constexpr double Follow = 0.05;
+                            s_PenOffsetX += Follow * ((errorX - 0.5) - s_PenOffsetX);
+                            s_PenOffsetY += Follow * ((errorY - 0.5) - s_PenOffsetY);
+                        }
+                        x = static_cast<float>(std::clamp(fx - s_PenOffsetX, x - 0.5, x + 1.5));
+                        y = static_cast<float>(std::clamp(fy - s_PenOffsetY, y - 0.5, y + 1.5));
                     }
-                }
-                else {
-                    s_PenWholePixelCount.fetch_add(1);
                 }
                 s_PenPixelX.store(x);
                 s_PenPixelY.store(y);
@@ -583,7 +605,7 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
         SDL_LogInfo(SDL_LOG_CATEGORY_INPUT,
                     "PLANK pen: event=%u tip=%s pressure=%.3f%s distance=%.3f "
                     "tilt=%u rotation=%u buttons=0x%x eraser=%s at %.3f,%.3f "
-                    "(SDL position was %+.0f,%+.0f px off)%s subpixel=%u/%u",
+                    "(SDL position was %+.0f,%+.0f px off)%s map-error=%.1f max %.1f px",
                     eventType, m_PenTipDown ? "down" : "up",
                     pressureOrDistance,
                     m_PenPressureSeen ? "" : " (no pressure axis reported)",
@@ -595,10 +617,10 @@ bool SdlInputHandler::sendPenEvent(unsigned char eventType, SDL_Window* window,
                     m_PenSdlOffsetX, m_PenSdlOffsetY,
                     m_PenWintabPressure >= 0.0f ? " [WinTab pressure]" : ""
 #ifdef Q_OS_WIN32
-                    , s_PenSubpixelCount.load(),
-                    s_PenSubpixelCount.load() + s_PenWholePixelCount.load()
+                    , static_cast<double>(s_PenMapErrorLast.load()),
+                    static_cast<double>(s_PenMapErrorMax.load())
 #else
-                    , 0u, 0u
+                    , 0.0, 0.0
 #endif
                     );
     }
