@@ -630,10 +630,6 @@ int Session::drSubmitDecodeUnit(PDECODE_UNIT du)
         if (decoder != nullptr) {
             int ret = decoder->submitDecodeUnit(du);
             SDL_UnlockSpinlock(&s_ActiveSession->m_DecoderLock);
-            if (ret == DR_OK &&
-                    !s_ActiveSession->m_TwoScreenPictureSeen.load(std::memory_order_relaxed)) {
-                s_ActiveSession->m_TwoScreenPictureSeen.store(true);
-            }
             return ret;
         }
         else {
@@ -3599,6 +3595,13 @@ bool Session::startConnectionAsync(bool reconnecting,
                 constexpr int MaximumWaitMs = 45000;
                 constexpr int CancellationPollMs = 50;
                 bool started = false;
+                // A host with one display keeps answering a two-screen request
+                // with 503 "unavailable"; a two-display host that is merely slow
+                // does not, so only the former resets two screens on timeout.
+                bool twoScreensStillRefused = m_UseMultiDisplayPresentation &&
+                        e.getStatusCode() == 503 &&
+                        statusMessage ==
+                            QStringLiteral("Host display layout transition is currently unavailable");
 
                 if (m_PlankUsername.isEmpty() ||
                         m_PlankPassword.isEmpty()) {
@@ -3674,6 +3677,10 @@ bool Session::startConnectionAsync(bool reconnecting,
                         startApp();
                         started = true;
                     } catch (const GfeHttpResponseException& retryError) {
+                        twoScreensStillRefused = m_UseMultiDisplayPresentation &&
+                                retryError.getStatusCode() == 503 &&
+                                QString::fromUtf8(retryError.getStatusMessage()) ==
+                                    QStringLiteral("Host display layout transition is currently unavailable");
                         if (retryError.getStatusCode() == 423) {
                             m_WaitingForSessionCleanup.store(false);
                             emit sessionCleanupWaitChanged(false, QString());
@@ -3706,6 +3713,9 @@ bool Session::startConnectionAsync(bool reconnecting,
                     return false;
                 }
                 if (!started) {
+                    if (twoScreensStillRefused) {
+                        abandonTwoScreensWithoutPicture("the workstation kept refusing two screens");
+                    }
                     if (!reconnecting) {
                         emit displayLaunchError(
                                     tr("The workstation display layout did not become ready within 45 seconds."));

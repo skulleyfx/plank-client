@@ -1939,6 +1939,9 @@ void FFmpegVideoDecoder::decoderThreadProc()
                     }
                     SDL_assert(m_FrameInfoQueue.size() == m_FramesIn - m_FramesOut);
                     m_FramesOut++;
+                    if (m_FramesOut == 1 && Session::get() != nullptr) {
+                        Session::get()->notePictureDecoded();
+                    }
 
                     // Attach HDR metadata to the frame if it's not already present. We will defer to
                     // any metadata contained in the bitstream itself since that is guaranteed to be

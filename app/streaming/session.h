@@ -153,6 +153,12 @@ public:
 
     void abandonTwoScreensWithoutPicture(const char* reason);
 
+    // Called by the decoder when the first frame comes out of it.
+    void notePictureDecoded()
+    {
+        m_TwoScreenPictureSeen.store(true);
+    }
+
     bool restartForDisplayChange() const
     {
         return m_RestartForDisplayChange;
@@ -479,7 +485,7 @@ private:
     QVector<ClientDisplaySnapshot> m_ClientDisplays;
     SDL_DisplayID m_TargetDisplayId = 0;
     bool m_UseMultiDisplayPresentation = false;
-    // Set by the first decoded frame. A two-screen session that fails for a
+    // Set by the first frame out of the decoder. A two-screen session that fails for a
     // two-screen reason before then switches the workstation back to one
     // screen (abandonTwoScreensWithoutPicture).
     std::atomic<bool> m_TwoScreenPictureSeen{false};
