@@ -171,6 +171,8 @@ public:
     NvOutputTopology getOutputTopology(QString* certificateSha256 = nullptr);
     NvOutputTopology prepareMacDisplay(const QString& mode, const QString& encodingMode);
     void setPlankHostVersion(const QString& version) { m_PlankHostVersion = version; }
+    MacMediaFeatures::Agreement negotiateMacMedia(const QString& encodingMode,
+                                                 const QString& certificateSha256);
     MacPreviewLaunch::Reply startMacPreview(const NvOutputTopology& topology,
                                            const QString& certificateSha256,
                                            int bitrateKbps, int udpPayloadSize,
@@ -242,5 +244,8 @@ private:
     QString m_SessionToken;
     // From /serverinfo; picks the Mac host's launch and display schemas.
     QString m_PlankHostVersion;
+    // Launch schema 7 only; cleared whenever the session token changes.
+    MacMediaFeatures::Agreement m_MacMediaAgreement;
+    QString m_MacMediaCertificate;
     QString m_WorkerInstance;
 };

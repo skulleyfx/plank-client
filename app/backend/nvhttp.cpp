@@ -114,6 +114,7 @@ void NvHTTP::setAddress(NvAddress address)
 void NvHTTP::setPlankSessionToken(QString sessionToken)
 {
     m_SessionToken = std::move(sessionToken);
+    m_MacMediaAgreement = {};
 }
 
 NvAddress NvHTTP::address()
@@ -651,6 +652,7 @@ QString NvHTTP::authenticate(QString username, QString password, bool* greeterCo
         const QString state = result.value("state").toString();
         if (state == "authenticated") {
             m_SessionToken = result.value("session_token").toString();
+            m_MacMediaAgreement = {};
             if (m_SessionToken.isEmpty()) {
                 throw GfeHttpResponseException(401, "Authentication returned no session token");
             }
@@ -796,17 +798,58 @@ NvOutputTopology NvHTTP::getOutputTopology(QString* certificateSha256)
     return topology;
 }
 
+// Mac host 1.2 and later (launch schema 7). Asked once per token and pin: a
+// refusal revokes the token, so there is no retry with an older schema.
+MacMediaFeatures::Agreement NvHTTP::negotiateMacMedia(const QString& encodingMode,
+                                                     const QString& certificateSha256)
+{
+    if (m_MacMediaAgreement.launchSchema && m_MacMediaAgreement.encodingMode == encodingMode &&
+            m_MacMediaCertificate == certificateSha256) return m_MacMediaAgreement;
+    m_MacMediaAgreement = {};
+    m_MacMediaCertificate.clear();
+    const auto offered = MacMediaFeatures::offer(encodingMode);
+    if (offered.isEmpty()) throw GfeHttpResponseException(426, "This Client does not support the selected Mac video profile.");
+    MacMediaFeatures::Agreement selected;
+    try {
+        const auto response = postPinnedMacJson(QStringLiteral("/plank/negotiate"), offered, certificateSha256);
+        if (!MacMediaFeatures::select(response, encodingMode, selected)) {
+            throw GfeHttpResponseException(426,
+                "Host and Client do not share the required desktop media features. Update the Mac Host or the Client.");
+        }
+    } catch (const GfeHttpResponseException& error) {
+        if (error.getStatusCode() != 404 && error.getStatusCode() != 426) throw;
+        throw GfeHttpResponseException(426,
+            "This Mac Host has no supported media negotiation protocol. Update the Mac Host or the Client.");
+    }
+    m_MacMediaAgreement = selected;
+    m_MacMediaCertificate = certificateSha256;
+    qInfo() << "Mac media agreement: launch=" << selected.launchSchema
+            << "clipboard=" << selected.enabled("clipboard");
+    return selected;
+}
+
 MacPreviewLaunch::Reply NvHTTP::startMacPreview(const NvOutputTopology& topology,
                                               const QString& certificateSha256,
                                               int bitrateKbps, int udpPayloadSize,
                                               bool clipboard)
 {
     const int schema = MacPreviewLaunch::launchSchemaFor(m_PlankHostVersion);
-    const auto body = MacPreviewLaunch::request(topology, bitrateKbps, udpPayloadSize, schema, clipboard);
+    const auto body = schema == 7 ? QJsonObject {} :
+            MacPreviewLaunch::request(topology, bitrateKbps, udpPayloadSize, schema, clipboard);
     // One-shot launch: even an ambiguous timeout must require fresh auth.
     SecureStringGuard tokenGuard(m_SessionToken);
-    const auto object = postPinnedMacJson(QStringLiteral("/plank/launch"), body, certificateSha256);
     MacPreviewLaunch::Reply parsed;
+    if (schema == 7) {
+        const auto agreement = negotiateMacMedia(topology.appleEncodingMode, certificateSha256);
+        const auto v7 = MacPreviewLaunch::requestV7(topology, bitrateKbps, udpPayloadSize, agreement, clipboard);
+        const auto reply = postPinnedMacJson(QStringLiteral("/plank/launch"), v7, certificateSha256);
+        if (!MacPreviewLaunch::parseReplyV7(reply, topology, controlPort(), udpPayloadSize, parsed,
+                                            agreement, bitrateKbps, clipboard)) {
+            throw GfeHttpResponseException(400, "Invalid Mac preview launch response");
+        }
+        return parsed;
+    }
+    const auto object = postPinnedMacJson(QStringLiteral("/plank/launch"), body, certificateSha256);
     if (!MacPreviewLaunch::parseReply(object, topology, controlPort(), udpPayloadSize, parsed, schema, clipboard)) {
         throw GfeHttpResponseException(400, "Invalid Mac preview launch response");
     }
@@ -825,6 +868,8 @@ NvOutputTopology NvHTTP::prepareMacDisplay(const QString& mode, const QString& e
     if (!NvOutputTopology::isFixedCaptureHost(current.featureFlags)) {
         throw GfeHttpResponseException(400, "Host does not support Mac desktop preparation");
     }
+    // Mac host 1.2 and later: fail on an incompatible host before resizing its display.
+    if (MacPreviewLaunch::launchSchemaFor(m_PlankHostVersion) == 7) negotiateMacMedia(encodingMode, pin);
     // Schema 3 (Mac host 1.0.120 and later) adds the backing scale; Windows
     // always asks for 1:1 pixels. Older hosts take schema 2, without it.
     QJsonObject displayRequest {{"schema_version", 2}, {"width", size.width()},
@@ -847,7 +892,8 @@ QJsonObject NvHTTP::postPinnedMacJson(const QString& path, const QJsonObject& bo
                                     const QString& certificateSha256)
 {
     const QByteArray pin = QByteArray::fromHex(certificateSha256.toLatin1());
-    if ((path != QLatin1String("/plank/launch") && path != QLatin1String("/plank/display")) ||
+    if ((path != QLatin1String("/plank/launch") && path != QLatin1String("/plank/display") &&
+         path != QLatin1String("/plank/negotiate")) ||
             body.isEmpty() || pin.size() != 32 ||
             QString::fromLatin1(pin.toHex()) != certificateSha256 ||
             m_SessionToken.isEmpty() || m_SessionToken.size() > 512 ||
@@ -931,6 +977,10 @@ QJsonObject NvHTTP::postPinnedMacJson(const QString& path, const QJsonObject& bo
                 "PLANK Host requires macOS permissions. On the Mac, open PLANK Host in Applications "
                 "and approve Screen Recording and Accessibility in System Settings > Privacy & Security. "
                 "If already enabled, the permissions may belong to an earlier signed build.");
+        }
+        if (path == QLatin1String("/plank/negotiate") && status == 426) {
+            throw GfeHttpResponseException(status,
+                "Host and Client do not share the required desktop media features. Update the Mac Host or the Client.");
         }
         throw GfeHttpResponseException(status, path == QLatin1String("/plank/display") ?
             "Mac desktop resolution change was not accepted" : "Mac stream launch was not accepted");

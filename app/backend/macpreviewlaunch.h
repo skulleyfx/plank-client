@@ -1,6 +1,7 @@
 #pragma once
 
 #include "outputtopology.h"
+#include "macmediafeatures.h"
 #include <Limelight.h>
 #include <QByteArray>
 #include <QStringList>
@@ -9,8 +10,10 @@
 // here from the version it publishes in /serverinfo:
 //   1.0.105 - 1.0.136  schema 2
 //   1.0.137 - 1.0.x    schema 3 (adds clipboard)
-//   1.1 and later      schema 4 (adds microphone), the oldest a 1.1 host
+//   1.1.x              schema 4 (adds microphone), the oldest a 1.1 host
 //                      accepts without /plank/negotiate
+//   1.2 and later      schema 7: /plank/negotiate first, then a launch that
+//                      carries the negotiated media features (no "services")
 // Text clipboard is asked for from schema 3 when the user allows it; the Mac
 // decides (only when the signed-in account owns the desktop) and says so in
 // the reply. Windows forwards no microphone or camera to a Mac host. Never reinterpret Linux's PLS1 launch response or infer services
@@ -27,9 +30,10 @@ inline int launchSchemaFor(const QString& hostVersion)
     const int major = parts.value(0).toInt(&ok0);
     const int minor = parts.value(1).toInt(&ok1);
     const int patch = parts.value(2).toInt(&ok2);
-    if (parts.size() < 3 || !ok0 || !ok1 || !ok2 || major > 1 || (major == 1 && minor >= 1)) {
-        return 4;
+    if (parts.size() < 3 || !ok0 || !ok1 || !ok2 || major > 1 || (major == 1 && minor >= 2)) {
+        return 7;
     }
+    if (major == 1 && minor == 1) return 4;
     return patch >= 137 ? 3 : 2;
 }
 
@@ -68,32 +72,41 @@ inline QJsonObject expectedServices(int schema, bool clipboard)
     return services;
 }
 
+// Schema 7 (Mac host 1.2 and later): the body carries the profiles chosen by
+// /plank/negotiate. Clipboard goes out null unless the user allows it.
+inline QJsonObject requestV7(const NvOutputTopology& topology, int bitrateKbps, int udpPayloadSize,
+                             const MacMediaFeatures::Agreement& agreement, bool clipboard = false)
+{
+    NvOutputTopology checked;
+    if (agreement.launchSchema != 7 || agreement.encodingMode != topology.appleEncodingMode ||
+            !NvOutputTopology::isFixedCaptureHost(topology.featureFlags) ||
+            !NvOutputTopology::fromJson(topology.toJson(), checked) ||
+            bitrateKbps < 10000 || bitrateKbps > 150000 ||
+            udpPayloadSize < 1200 || udpPayloadSize > 65527) return {};
+    auto features = agreement.features;
+    auto desktop = features.value("desktop").toObject();
+    desktop.insert("width", checked.desktopWidth);
+    desktop.insert("height", checked.desktopHeight);
+    desktop.insert("encoding_mode", checked.appleEncodingMode);
+    desktop.insert("frame_rate", 60);
+    desktop.insert("bitrate_kbps", bitrateKbps);
+    features.insert("desktop", desktop);
+    if (!clipboard) features.insert("clipboard", QJsonValue::Null);
+    return {{"schema_version", 7}, {"capture_generation", checked.generation},
+            {"capture_id", checked.outputs.first().id}, {"max_udp_payload_size", udpPayloadSize},
+            {"transport", MacMediaFeatures::transport()}, {"required_features", agreement.requiredFeatures},
+            {"features", features}};
+}
+
 struct Reply {
     QByteArray transportToken;
     bool clipboard = false;
     PLANK_NATIVE_SESSION_CONFIGURATION configuration {};
 };
 
-inline bool parseReply(const QJsonObject& object, const NvOutputTopology& topology,
-                       int approvedControlPort, int udpPayloadSize, Reply& reply,
-                       int schema = 4, bool clipboardRequested = false)
+inline bool fillReply(const QJsonObject& object, const NvOutputTopology& topology,
+                      int approvedControlPort, Reply& reply)
 {
-    // Always clear an earlier successful result before parsing a new response.
-    reply.transportToken.fill('\0');
-    reply = {};
-    if (request(topology, 10000, udpPayloadSize, schema).isEmpty() ||
-            approvedControlPort < 1 || approvedControlPort > 65535 ||
-            object.size() != 7 || object.value("schema_version") != QJsonValue(schema) ||
-            object.value("state") != QJsonValue("connecting") ||
-            object.value("udp_port") != QJsonValue(approvedControlPort) ||
-            object.value("max_udp_payload_size") != QJsonValue(udpPayloadSize) ||
-            object.value("capture") != topology.toJson().value("capture") ||
-            (object.value("services") != QJsonValue(expectedServices(schema, false)) &&
-             !(clipboardRequested && schema >= 3 &&
-               object.value("services") == QJsonValue(expectedServices(schema, true))))) return false;
-    reply.clipboard = clipboardRequested && schema >= 3 &&
-            object.value("services").toObject().value("clipboard") == QJsonValue(true);
-
     const QString token = object.value("transport_token").toString();
     if (token.size() != 44) return false;
     const QByteArray encoded = token.toLatin1();
@@ -115,6 +128,62 @@ inline bool parseReply(const QJsonObject& object, const NvOutputTopology& topolo
     reply.configuration.opusConfiguration.mapping[0] = 0;
     reply.configuration.opusConfiguration.mapping[1] = 1;
     return true;
+}
+
+inline bool parseReply(const QJsonObject& object, const NvOutputTopology& topology,
+                       int approvedControlPort, int udpPayloadSize, Reply& reply,
+                       int schema = 4, bool clipboardRequested = false)
+{
+    // Always clear an earlier successful result before parsing a new response.
+    reply.transportToken.fill('\0');
+    reply = {};
+    if (request(topology, 10000, udpPayloadSize, schema).isEmpty() ||
+            approvedControlPort < 1 || approvedControlPort > 65535 ||
+            object.size() != 7 || object.value("schema_version") != QJsonValue(schema) ||
+            object.value("state") != QJsonValue("connecting") ||
+            object.value("udp_port") != QJsonValue(approvedControlPort) ||
+            object.value("max_udp_payload_size") != QJsonValue(udpPayloadSize) ||
+            object.value("capture") != topology.toJson().value("capture") ||
+            (object.value("services") != QJsonValue(expectedServices(schema, false)) &&
+             !(clipboardRequested && schema >= 3 &&
+               object.value("services") == QJsonValue(expectedServices(schema, true))))) return false;
+    reply.clipboard = clipboardRequested && schema >= 3 &&
+            object.value("services").toObject().value("clipboard") == QJsonValue(true);
+
+    return fillReply(object, topology, approvedControlPort, reply);
+}
+
+// Schema 7 reply: nine keys and "features" instead of "services". Optional
+// features this client did not ask for must be null; unknown names are ignored.
+inline bool parseReplyV7(const QJsonObject& object, const NvOutputTopology& topology,
+                         int approvedControlPort, int udpPayloadSize, Reply& reply,
+                         const MacMediaFeatures::Agreement& agreement, int bitrateKbps, bool clipboardRequested = false)
+{
+    reply.transportToken.fill('\0');
+    reply = {};
+    const auto sent = requestV7(topology, bitrateKbps, udpPayloadSize, agreement, clipboardRequested);
+    if (sent.isEmpty() || approvedControlPort < 1 || approvedControlPort > 65535 ||
+            object.size() > 16 || object.contains("services") ||
+            object.value("schema_version") != QJsonValue(7) ||
+            object.value("state") != QJsonValue("connecting") ||
+            object.value("udp_port") != QJsonValue(approvedControlPort) ||
+            object.value("max_udp_payload_size") != QJsonValue(udpPayloadSize) ||
+            object.value("capture") != topology.toJson().value("capture") ||
+            object.value("transport") != MacMediaFeatures::transport() ||
+            !MacMediaFeatures::validRequired(object.value("required_features")) ||
+            !object.value("features").isObject() || object.value("features").toObject().size() > 32) return false;
+    const auto features = object.value("features").toObject();
+    const auto expected = sent.value("features").toObject();
+    for (const auto& name : agreement.requiredFeatures)
+        if (!object.value("required_features").toArray().contains(name)) return false;
+    for (const auto& name : MacMediaFeatures::names()) {
+        const auto value = features.value(name);
+        if ((value.isNull() || value.isUndefined()) && !object.value("required_features").toArray().contains(name)) continue;
+        if (!expected.value(name).isObject() ||
+                !MacMediaFeatures::containsProfile(value, expected.value(name).toObject())) return false;
+    }
+    reply.clipboard = features.value("clipboard").isObject();
+    return fillReply(object, topology, approvedControlPort, reply);
 }
 
 } // namespace MacPreviewLaunch
