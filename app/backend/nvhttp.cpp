@@ -809,17 +809,18 @@ MacMediaFeatures::Agreement NvHTTP::negotiateMacMedia(const QString& encodingMod
     m_MacMediaCertificate.clear();
     const auto offered = MacMediaFeatures::offer(encodingMode);
     if (offered.isEmpty()) throw GfeHttpResponseException(426, "This Client does not support the selected Mac video profile.");
-    MacMediaFeatures::Agreement selected;
+    QJsonObject response;
     try {
-        const auto response = postPinnedMacJson(QStringLiteral("/plank/negotiate"), offered, certificateSha256);
-        if (!MacMediaFeatures::select(response, encodingMode, selected)) {
-            throw GfeHttpResponseException(426,
-                "Host and Client do not share the required desktop media features. Update the Mac Host or the Client.");
-        }
+        response = postPinnedMacJson(QStringLiteral("/plank/negotiate"), offered, certificateSha256);
     } catch (const GfeHttpResponseException& error) {
-        if (error.getStatusCode() != 404 && error.getStatusCode() != 426) throw;
+        if (error.getStatusCode() != 404) throw;
         throw GfeHttpResponseException(426,
             "This Mac Host has no supported media negotiation protocol. Update the Mac Host or the Client.");
+    }
+    MacMediaFeatures::Agreement selected;
+    if (!MacMediaFeatures::select(response, encodingMode, selected)) {
+        throw GfeHttpResponseException(426,
+            "Host and Client do not share the required desktop media features. Update the Mac Host or the Client.");
     }
     m_MacMediaAgreement = selected;
     m_MacMediaCertificate = certificateSha256;
